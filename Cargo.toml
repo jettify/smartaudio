@@ -1,0 +1,22 @@
+[package]
+name = "smartaudio"
+version = "0.1.0"
+edition = "2021"
+
+
+description = "A `no_std` Rust library for parsing the TBS smartaudio protocol"
+categories = ["embedded", "no-std"]
+authors = ["Nickolai Novik <nickolainovik@gmail.com>"]
+license = "GPL-3.0"
+homepage = "https://github.com/jettify/smartaudio"
+repository = "https://github.com/jettify/smartaudio"
+readme = "README.md"
+
+[dependencies]
+defmt = { version = "1.0.1", optional = true }
+
+
+[dev-dependencies]
+
+[features]
+"defmt" = ["dep:defmt"]
