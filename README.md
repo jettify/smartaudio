@@ -1,6 +1,7 @@
 # SmartAudio
 [![CI](https://github.com/jettify/smartaudio/actions/workflows/CI.yml/badge.svg)](https://github.com/jettify/smartaudio/actions/workflows/CI.yml)
-
+[![crates.io](https://img.shields.io/crates/v/smartaudio)](https://crates.io/crates/smartaudio)
+[![docs.rs](https://img.shields.io/docsrs/smartaudio)](https://docs.rs/smartaudio/latest/smartaudio/)
 This is a `no_std` platform-agnostic implementation of the TBS `SmartAudio` protocol in Rust.
 
 ## Features
@@ -40,6 +41,21 @@ fn main() {
         }
     }
 }
+```
+
+## Installation
+
+Add `smartaudio` to your `Cargo.toml`:
+
+```toml
+[dependencies]
+smartaudio = "0.1.0"
+```
+
+Or use the command line:
+
+```bash
+cargo add smartaudio
 ```
 
 ## License

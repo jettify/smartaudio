@@ -20,17 +20,6 @@ fn crc8_dvb_s2(data: &[u8]) -> u8 {
     crc
 }
 
-// Response bytes received from the VTX
-mod response {
-    pub const GET_SETTINGS_V1: u8 = 0x01;
-    pub const GET_SETTINGS_V2: u8 = 0x09;
-    pub const GET_SETTINGS_V21: u8 = 0x11;
-    pub const SET_POWER: u8 = 0x02;
-    pub const SET_CHANNEL: u8 = 0x03;
-    pub const SET_FREQUENCY: u8 = 0x04;
-    pub const SET_MODE: u8 = 0x05;
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SmartAudioError {
     BufferTooSmall(usize),
@@ -41,35 +30,7 @@ pub enum SmartAudioError {
     UnexpetedDataForState(State, u8),
 }
 
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum CommandId {
-    GetSettings,
-    SetPower,
-    SetChannel,
-    SetFrequency,
-    SetMode,
-}
-
-impl TryFrom<u8> for CommandId {
-    type Error = SmartAudioError;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            response::GET_SETTINGS_V1 => Ok(Self::GetSettings),
-            response::GET_SETTINGS_V2 => Ok(Self::GetSettings),
-            response::GET_SETTINGS_V21 => Ok(Self::GetSettings),
-            response::SET_POWER => Ok(Self::SetPower),
-            response::SET_CHANNEL => Ok(Self::SetChannel),
-            response::SET_FREQUENCY => Ok(Self::SetFrequency),
-            response::SET_MODE => Ok(Self::SetMode),
-            _ => Err(SmartAudioError::UnknownCommand(value)),
-        }
-    }
-}
-
-#[derive(Debug, Default, Ord, PartialOrd, Eq, PartialEq, Copy, Clone)]
+#[derive(Debug, Default, Eq, PartialEq, Copy, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum State {
     #[default]
@@ -80,14 +41,14 @@ pub enum State {
     Reading(usize),
 }
 
-#[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RawSmartAudioFrame<'a> {
     bytes: &'a [u8],
 }
 
 impl<'a> RawSmartAudioFrame<'a> {
-    pub fn new(bytes: &'a [u8]) -> Option<Self> {
+    pub(crate) fn new(bytes: &'a [u8]) -> Option<Self> {
         if bytes.len() >= 4 {
             Some(Self { bytes })
         } else {
@@ -211,7 +172,6 @@ impl Default for SmartAudioParser {
 #[cfg(test)]
 mod tests {
 
-    extern crate std;
     use super::*;
     #[test]
     fn test_raw_responses_parsing() {
