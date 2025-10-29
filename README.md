@@ -1,5 +1,6 @@
 # SmartAudio
 [![CI](https://github.com/jettify/smartaudio/actions/workflows/CI.yml/badge.svg)](https://github.com/jettify/smartaudio/actions/workflows/CI.yml)
+[![codecov](https://codecov.io/gh/jettify/smartaudio/graph/badge.svg?token=RCM2W4C0LB)](https://codecov.io/gh/jettify/smartaudio)
 [![crates.io](https://img.shields.io/crates/v/smartaudio)](https://crates.io/crates/smartaudio)
 [![docs.rs](https://img.shields.io/docsrs/smartaudio)](https://docs.rs/smartaudio/latest/smartaudio/)
 
