@@ -1,6 +1,7 @@
 use crate::{parser::SmartAudioError, RawSmartAudioFrame};
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Version {
     V1_0,
     #[default]
@@ -21,6 +22,7 @@ impl From<u8> for Version {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct PowerSettings {
     pub current_power: u8,
     pub num_power_levels: u8,
@@ -31,6 +33,7 @@ pub struct PowerSettings {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Settings {
     pub version: Version,
     pub channel: u8,
@@ -182,7 +185,8 @@ mod resp {
     pub const SET_MODE: u8 = 0x05;
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Response {
     GetSettings(Settings),
     SetPower(SetPowerResponse),

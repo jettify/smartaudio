@@ -21,6 +21,7 @@ fn crc8_dvb_s2(data: &[u8]) -> u8 {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SmartAudioError {
     BufferTooSmall(usize),
     InvalidCrc { calculated_crc: u8, frame_crc: u8 },
