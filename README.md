@@ -2,6 +2,7 @@
 [![CI](https://github.com/jettify/smartaudio/actions/workflows/CI.yml/badge.svg)](https://github.com/jettify/smartaudio/actions/workflows/CI.yml)
 [![crates.io](https://img.shields.io/crates/v/smartaudio)](https://crates.io/crates/smartaudio)
 [![docs.rs](https://img.shields.io/docsrs/smartaudio)](https://docs.rs/smartaudio/latest/smartaudio/)
+
 This is a `no_std` platform-agnostic implementation of the TBS `SmartAudio` protocol in Rust.
 
 ## Features
@@ -60,7 +61,7 @@ cargo add smartaudio
 
 ## License
 
-This project is licensed under the `GPL v3`. See the [LICENSE](https://github.com/jettify/smartaudio/blob/master/LICENSE) file for details.
+This project is licensed under the `Apache 2.0`. See the [LICENSE](https://github.com/jettify/smartaudio/blob/master/LICENSE) file for details.
 
 ## Protocol Specification
 
