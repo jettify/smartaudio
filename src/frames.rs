@@ -1,3 +1,6 @@
+use crate::constants::get_settings_flags;
+use crate::constants::mode_flags;
+use crate::constants::response as resp;
 use crate::{parser::SmartAudioError, RawSmartAudioFrame};
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,10 +27,6 @@ impl From<u8> for Version {
 pub trait SmartAudioReponse {
     fn from_raw_frame(raw_frame: &RawSmartAudioFrame<'_>) -> Self;
 }
-
-//pub trait SmartAudioCommand {
-//    fn to_bytes(&self, buffer: &mut [u8]) -> Result<usize, SmartAudioError>;
-//}
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -107,31 +106,14 @@ pub struct SetModeResponse {
     unlocked: bool,
 }
 
-// Bitmasks for GetSettings response payload
-mod get_settings_flags {
-    pub const USER_FREQUENCY: u8 = 0x01;
-    pub const PITMODE_ENABLED: u8 = 0x02;
-    pub const PITMODE_IN_RANGE: u8 = 0x04;
-    pub const PITMODE_OUT_RANGE: u8 = 0x08;
-    pub const UNLOCKED: u8 = 0x10;
-}
-
-// Bitmasks for SetMode command payload
-mod set_mode_flags {
-    pub const PITMODE_IN_RANGE: u8 = 0x01;
-    pub const PITMODE_OUT_RANGE: u8 = 0x02;
-    pub const PITMODE_ENABLED: u8 = 0x04;
-    pub const UNLOCKED: u8 = 0x08;
-}
-
 impl SmartAudioReponse for SetModeResponse {
     fn from_raw_frame(raw_frame: &RawSmartAudioFrame<'_>) -> Self {
         let mode = raw_frame.payload()[0];
         Self {
-            pitmode_in_range_active: mode & set_mode_flags::PITMODE_IN_RANGE != 0,
-            pitmode_out_range_active: mode & set_mode_flags::PITMODE_OUT_RANGE != 0,
-            pitmode_enabled: mode & set_mode_flags::PITMODE_ENABLED != 0,
-            unlocked: mode & set_mode_flags::UNLOCKED != 0,
+            pitmode_in_range_active: mode & mode_flags::PITMODE_IN_RANGE != 0,
+            pitmode_out_range_active: mode & mode_flags::PITMODE_OUT_RANGE != 0,
+            pitmode_enabled: mode & mode_flags::PITMODE_ENABLED != 0,
+            unlocked: mode & mode_flags::UNLOCKED != 0,
         }
     }
 }
@@ -180,16 +162,6 @@ impl SmartAudioReponse for Settings {
             power_settings,
         }
     }
-}
-
-mod resp {
-    pub const GET_SETTINGS_V1_0: u8 = 0x01;
-    pub const GET_SETTINGS_V2_0: u8 = 0x09;
-    pub const GET_SETTINGS_V2_1: u8 = 0x11;
-    pub const SET_POWER: u8 = 0x02;
-    pub const SET_CHANNEL: u8 = 0x03;
-    pub const SET_FREQUENCY: u8 = 0x04;
-    pub const SET_MODE: u8 = 0x05;
 }
 
 #[derive(Debug, Clone)]

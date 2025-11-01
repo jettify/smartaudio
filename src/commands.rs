@@ -1,24 +1,10 @@
+use crate::constants::command;
+use crate::constants::mode_flags;
 use crate::parser::frame_payload;
 use crate::parser::SmartAudioError;
 
 pub trait SmartAudioCommand {
     fn to_bytes(&self, buffer: &mut [u8]) -> Result<usize, SmartAudioError>;
-}
-
-mod set_mode_flags {
-    pub const PITMODE_IN_RANGE: u8 = 0x01;
-    pub const PITMODE_OUT_RANGE: u8 = 0x02;
-    pub const PITMODE_ENABLED: u8 = 0x04;
-    pub const UNLOCKED: u8 = 0x08;
-}
-
-// Command bytes sent to the VTX
-mod command {
-    pub const GET_SETTINGS: u8 = 0x03;
-    pub const SET_POWER: u8 = 0x05;
-    pub const SET_CHANNEL: u8 = 0x07;
-    pub const SET_FREQUENCY: u8 = 0x09;
-    pub const SET_MODE: u8 = 0x0B;
 }
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,10 +82,10 @@ pub struct SetModeCommand {
 
 impl SmartAudioCommand for SetModeCommand {
     fn to_bytes(&self, buffer: &mut [u8]) -> Result<usize, SmartAudioError> {
-        let mode = (self.pitmode_in_range_active as u8 * set_mode_flags::PITMODE_IN_RANGE)
-            | (self.pitmode_out_range_active as u8 * set_mode_flags::PITMODE_OUT_RANGE)
-            | (self.pitmode_enabled as u8 * set_mode_flags::PITMODE_ENABLED)
-            | (self.unlocked as u8 * set_mode_flags::UNLOCKED);
+        let mode = (self.pitmode_in_range_active as u8 * mode_flags::PITMODE_IN_RANGE)
+            | (self.pitmode_out_range_active as u8 * mode_flags::PITMODE_OUT_RANGE)
+            | (self.pitmode_enabled as u8 * mode_flags::PITMODE_ENABLED)
+            | (self.unlocked as u8 * mode_flags::UNLOCKED);
         let payload = [mode];
         frame_payload(buffer, command::SET_MODE, &payload)
     }

@@ -1,9 +1,4 @@
-// Constants for SmartAudio protocol
-const HEADER_BYTE_1: u8 = 0xAA;
-const HEADER_BYTE_2: u8 = 0x55;
-const MAX_FRAME_SIZE: usize = 32;
-const MAX_PAYLOAD_SIZE: usize = 28;
-const MIN_PAYLOAD_SIZE: usize = 3;
+use crate::constants;
 
 fn crc8_dvb_s2(data: &[u8]) -> u8 {
     let mut crc = 0;
@@ -40,8 +35,8 @@ pub fn frame_payload(
     if buffer.len() < 2 + 1 + 1 + payload_size + 1 {
         return Err(SmartAudioError::BufferTooSmall(buffer.len()));
     }
-    buffer[0] = HEADER_BYTE_1;
-    buffer[1] = HEADER_BYTE_2;
+    buffer[0] = constants::HEADER_BYTE_1;
+    buffer[1] = constants::HEADER_BYTE_2;
     buffer[2] = command;
     buffer[3] = payload_size as u8;
     buffer[4..4 + payload_size].copy_from_slice(payload);
@@ -102,7 +97,7 @@ impl<'a> RawSmartAudioFrame<'a> {
 
 #[derive(Debug)]
 pub struct SmartAudioParser {
-    buffer: [u8; MAX_FRAME_SIZE],
+    buffer: [u8; constants::MAX_FRAME_SIZE],
     state: State,
     position: usize,
 }
@@ -110,7 +105,7 @@ pub struct SmartAudioParser {
 impl SmartAudioParser {
     pub fn new() -> Self {
         Self {
-            buffer: [0; MAX_FRAME_SIZE],
+            buffer: [0; constants::MAX_FRAME_SIZE],
             state: State::AwaitingHeader1,
             position: 0,
         }
@@ -126,13 +121,13 @@ impl SmartAudioParser {
         byte: u8,
     ) -> Result<Option<RawSmartAudioFrame<'_>>, SmartAudioError> {
         match self.state {
-            State::AwaitingHeader1 if byte == HEADER_BYTE_1 => {
+            State::AwaitingHeader1 if byte == constants::HEADER_BYTE_1 => {
                 self.position = 0;
                 self.buffer[self.position] = byte;
                 self.state = State::AwaitingHeader2;
                 Ok(None)
             }
-            State::AwaitingHeader2 if byte == HEADER_BYTE_2 => {
+            State::AwaitingHeader2 if byte == constants::HEADER_BYTE_2 => {
                 self.position += 1;
                 self.buffer[self.position] = byte;
                 self.state = State::AwaitingCommand;
@@ -145,7 +140,8 @@ impl SmartAudioParser {
                 Ok(None)
             }
             State::AwaitingLength
-                if (MIN_PAYLOAD_SIZE..MAX_PAYLOAD_SIZE).contains(&(byte as usize)) =>
+                if (constants::MIN_PAYLOAD_SIZE..constants::MAX_PAYLOAD_SIZE)
+                    .contains(&(byte as usize)) =>
             {
                 self.position += 1;
                 self.buffer[self.position] = byte;
