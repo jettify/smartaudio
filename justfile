@@ -1,8 +1,8 @@
 # List available recipes
 default:
-  just --list
+  @just --list
 
-# Run cargo doc
+# Run cargo doc and open result in browser
 [group('build')]
 doc:
   cargo doc --all-features --no-deps --open
@@ -38,21 +38,6 @@ lint:
   cargo check
   cargo clippy --all -- -D warnings
 
-# Run example local_std that parses packets incoming via USB serial port.
-[group('examples')]
-example_std:
-  cargo run --example=std
-
-# Run example local_raw that parses raw packets incoming via USB serial port.
-[group('examples')]
-example_raw:
-  cargo run --example=raw
-
-# Run example local_simple that parses hard coded buffer.
-[group('examples')]
-example_simple:
-  cargo run --example=simple
-
 # Lint source code with strict linter
 [group('lint')]
 pedantic:
@@ -62,6 +47,12 @@ pedantic:
 [group('lint')]
 audit:
   cargo audit
+
+# Run example local_simple that parses hard coded buffer.
+[group('examples')]
+example_raw_frame:
+  cargo run --example=simple_raw_frame
+
 
 set positional-arguments
 # Run tests for all features
