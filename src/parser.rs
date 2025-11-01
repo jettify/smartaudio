@@ -31,6 +31,26 @@ pub enum SmartAudioError {
     UnexpetedDataForState(State, u8),
 }
 
+pub fn frame_payload(
+    buffer: &mut [u8],
+    command: u8,
+    payload: &[u8],
+) -> Result<usize, SmartAudioError> {
+    let payload_size = payload.len();
+    if buffer.len() < 2 + 1 + 1 + payload_size + 1 {
+        return Err(SmartAudioError::BufferTooSmall(buffer.len()));
+    }
+    buffer[0] = HEADER_BYTE_1;
+    buffer[1] = HEADER_BYTE_2;
+    buffer[2] = command;
+    buffer[3] = payload_size as u8;
+    buffer[4..4 + payload_size].copy_from_slice(payload);
+
+    let crc = crc8_dvb_s2(&buffer[0..payload_size + 4]);
+    buffer[payload_size + 4] = crc;
+    Ok(payload_size + 5)
+}
+
 #[derive(Debug, Default, Eq, PartialEq, Copy, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum State {
