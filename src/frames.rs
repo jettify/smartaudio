@@ -21,6 +21,14 @@ impl From<u8> for Version {
     }
 }
 
+pub trait SmartAudioReponse {
+    fn from_raw_frame(raw_frame: &RawSmartAudioFrame<'_>) -> Self;
+}
+
+//pub trait SmartAudioCommand {
+//    fn to_bytes(&self, buffer: &mut [u8]) -> Result<usize, SmartAudioError>;
+//}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct PowerSettings {
@@ -53,7 +61,7 @@ pub struct SetPowerResponse {
     power: u8,
 }
 
-impl SetPowerResponse {
+impl SmartAudioReponse for SetPowerResponse {
     fn from_raw_frame(raw_frame: &RawSmartAudioFrame<'_>) -> Self {
         Self {
             power: raw_frame.payload()[0],
@@ -67,7 +75,7 @@ pub struct SetChannelResponse {
     channel: u8,
 }
 
-impl SetChannelResponse {
+impl SmartAudioReponse for SetChannelResponse {
     fn from_raw_frame(raw_frame: &RawSmartAudioFrame<'_>) -> Self {
         Self {
             channel: raw_frame.payload()[0],
@@ -81,7 +89,7 @@ pub struct SetFrequencyResponse {
     frequency: u16,
 }
 
-impl SetFrequencyResponse {
+impl SmartAudioReponse for SetFrequencyResponse {
     fn from_raw_frame(raw_frame: &RawSmartAudioFrame<'_>) -> Self {
         let buffer = raw_frame.payload();
         Self {
@@ -116,12 +124,11 @@ mod set_mode_flags {
     pub const UNLOCKED: u8 = 0x08;
 }
 
-impl SetModeResponse {
+impl SmartAudioReponse for SetModeResponse {
     fn from_raw_frame(raw_frame: &RawSmartAudioFrame<'_>) -> Self {
         let mode = raw_frame.payload()[0];
         Self {
             pitmode_in_range_active: mode & set_mode_flags::PITMODE_IN_RANGE != 0,
-
             pitmode_out_range_active: mode & set_mode_flags::PITMODE_OUT_RANGE != 0,
             pitmode_enabled: mode & set_mode_flags::PITMODE_ENABLED != 0,
             unlocked: mode & set_mode_flags::UNLOCKED != 0,
@@ -129,7 +136,7 @@ impl SetModeResponse {
     }
 }
 
-impl Settings {
+impl SmartAudioReponse for Settings {
     fn from_raw_frame(raw_frame: &RawSmartAudioFrame<'_>) -> Self {
         let b = raw_frame.payload();
 
