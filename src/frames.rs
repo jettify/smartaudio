@@ -16,9 +16,11 @@ pub enum Version {
 impl From<u8> for Version {
     fn from(v: u8) -> Self {
         match v {
-            0x01 => Self::V1_0,
-            0x09 => Self::V2_0,
-            0x11 => Self::V2_1,
+            // Command byte for getting settings also indicates
+            // versoin of protocol.
+            resp::GET_SETTINGS_V1_0 => Self::V1_0,
+            resp::GET_SETTINGS_V2_0 => Self::V2_0,
+            resp::GET_SETTINGS_V2_1 => Self::V2_1,
             _ => Self::Unknown,
         }
     }
