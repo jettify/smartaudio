@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1](https://github.com/jettify/smartaudio/compare/v0.2.0...v0.2.1) - 2025-11-01
+
+### Added
+
+- Move constants to separate module. ([#14](https://github.com/jettify/smartaudio/issues/14))
+- Implement command frames construction. ([#13](https://github.com/jettify/smartaudio/issues/13))
+- Improve defmt support. ([#11](https://github.com/jettify/smartaudio/issues/11))
+
+### Other
+
+- Cleanup justfile and updated dependencies. ([#15](https://github.com/jettify/smartaudio/issues/15))
+
 ## [0.2.0](https://github.com/jettify/smartaudio/compare/v0.1.1...v0.2.0) - 2025-10-29
 
 ### Added
