@@ -1,6 +1,7 @@
 use crate::constants::get_settings_flags;
 use crate::constants::mode_flags;
 use crate::constants::response as resp;
+use crate::SmartAudioParser;
 use crate::{parser::SmartAudioError, RawSmartAudioFrame};
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
@@ -197,10 +198,20 @@ impl Response {
     }
 }
 
+impl SmartAudioParser {
+    pub fn push_byte(&mut self, byte: u8) -> Result<Option<Response>, SmartAudioError> {
+        let Some(raw_packet) = self.push_byte_raw(byte)? else {
+            return Ok(None);
+        };
+        Response::parse(&raw_packet).map(Some)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::parser::RawSmartAudioFrame;
+    use crate::parser::SmartAudioError;
 
     #[test]
     fn test_get_settings_v1_0_parsing() {
@@ -318,5 +329,47 @@ mod tests {
             unlocked: true,
         };
         assert!(matches!(packet, Response::SetMode(actual) if actual == expected));
+    }
+
+    #[test]
+    fn test_push_byte_get_settings() {
+        let raw: [u8; 10] = [0xAA, 0x55, 0x09, 0x06, 0x01, 0x00, 0x1A, 0x16, 0xE9, 0x0A];
+        let mut parser = SmartAudioParser::default();
+
+        for byte in raw.iter().take(raw.len() - 1) {
+            assert!(matches!(parser.push_byte(*byte), Ok(None)));
+        }
+
+        let result = parser.push_byte(raw[raw.len() - 1]);
+        let expected = Settings {
+            version: Version::V2_0,
+            channel: 1,
+            power_level: 0,
+            frequency: 5865,
+            unlocked: true,
+            user_frequency_mode: false,
+            pitmode_enabled: true,
+            pitmode_in_range_active: false,
+            pitmode_out_range_active: true,
+            power_settings: None,
+        };
+        match result {
+            Ok(Some(Response::GetSettings(actual))) => assert_eq!(actual, expected),
+            other => panic!("Unexpected result: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_push_byte_invalid_crc() {
+        // Same as test_get_settings_v2_0_parsing, but with last byte (CRC) modified
+        let raw: [u8; 10] = [0xAA, 0x55, 0x09, 0x06, 0x01, 0x00, 0x1A, 0x16, 0xE9, 0x0B]; // 0x0A is correct CRC
+        let mut parser = SmartAudioParser::default();
+
+        for byte in raw.iter().take(raw.len() - 1) {
+            assert!(matches!(parser.push_byte(*byte), Ok(None)));
+        }
+
+        let result = parser.push_byte(raw[raw.len() - 1]);
+        assert!(matches!(result, Err(SmartAudioError::InvalidCrc { .. })));
     }
 }
