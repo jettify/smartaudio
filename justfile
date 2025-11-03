@@ -47,11 +47,20 @@ pedantic:
 [group('lint')]
 audit:
   cargo audit
+# Run cargo audit to vet dependencies
+[group('lint')]
+outdated:
+  cargo outdated
 
-# Run example local_simple that parses hard coded buffer.
+# Run example that parses hard codded buffer and print byte slices that contain valid frames.
 [group('examples')]
 example_raw_frame:
   cargo run --example=simple_raw_frame
+
+# Run example that parses hard codded buffer and print parsed frames.
+[group('examples')]
+example_frame:
+  cargo run --example=simple_frame
 
 
 set positional-arguments
