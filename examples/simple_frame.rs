@@ -1,3 +1,4 @@
+use smartaudio::Response;
 use smartaudio::SmartAudioParser;
 
 fn main() {
@@ -13,11 +14,18 @@ fn main() {
         0x16, 0xE9, // Current Frequency 5865
         0x0A, // CRC8
     ];
-    println!("Parssing packet:");
+    println!("Parssing raw packet:");
     for b in &raw_settings_v20[0..raw_settings_v20.len()] {
-        let reult = parser.push_byte_raw(*b);
+        let reult = parser.push_byte(*b);
         match reult {
-            Ok(Some(f)) => println!("{:#?}", f),
+            Ok(Some(Response::GetSettings(settings))) => {
+                println!("{:#?}", settings);
+                println!("\n");
+                println!("Version:     {:?}", settings.version);
+                println!("Channel:     {:?}", settings.channel);
+                println!("Power Level: {:?}", settings.power_level);
+                println!("Unlocked:    {:?}", settings.unlocked);
+            }
             Err(e) => eprintln!("Error parsing packet: {:?}", e),
             _ => (),
         }
