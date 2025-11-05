@@ -62,6 +62,10 @@ example_raw_frame:
 example_frame:
   cargo run --example=simple_frame
 
+# Run example that parses hard codded buffer and print parsed frames using iterator.
+[group('examples')]
+example_iter:
+  cargo run --example=simple_iter
 
 set positional-arguments
 # Run tests for all features

@@ -8,10 +8,10 @@ This is a `no_std` platform-agnostic implementation of the TBS `SmartAudio` prot
 
 ## Features
 
-*   `no_std`: Does not use the standard library or an allocator.
-*   Platform Agnostic: Can be used on any MCU or platform.
-*   Ergonomic: Designed to be easy to use in idiomatic Rust.
-*   Layered: Provides a low-level layer for raw byte handling and a high-level layer for structured data.
+* `no_std`, does not use the standard library or an allocator.
+* Platform Agnostic, can be used on any MCU or platform.
+* Provides a low-level interface to slice byte stream into valid frames.
+* Supports `SmartAudio` protocols `1.0`, `2.0` and `2.1`.
 
 ## Usage Example
 
@@ -51,7 +51,7 @@ Add `smartaudio` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-smartaudio = "0.1.0"
+smartaudio = "*" # replace * by the latest version of the crate.
 ```
 
 Or use the command line:
