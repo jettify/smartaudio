@@ -199,6 +199,40 @@ impl Response {
 }
 
 impl SmartAudioParser {
+    pub fn iter_frames<'a, 'b>(&'a mut self, buffer: &'b [u8]) -> ResponseIterator<'a, 'b> {
+        ResponseIterator {
+            parser: self,
+            buffer,
+            position: 0,
+        }
+    }
+}
+
+pub struct ResponseIterator<'a, 'b> {
+    parser: &'a mut SmartAudioParser,
+    buffer: &'b [u8],
+    position: usize,
+}
+
+impl<'a, 'b> Iterator for ResponseIterator<'a, 'b> {
+    type Item = Result<Response, SmartAudioError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.position < self.buffer.len() {
+            let byte = self.buffer[self.position];
+            self.position += 1;
+
+            match self.parser.push_byte(byte) {
+                Ok(Some(response)) => return Some(Ok(response)),
+                Ok(None) => continue, // Continue feeding bytes
+                Err(e) => return Some(Err(e)),
+            }
+        }
+        None
+    }
+}
+
+impl SmartAudioParser {
     pub fn push_byte(&mut self, byte: u8) -> Result<Option<Response>, SmartAudioError> {
         let Some(raw_packet) = self.push_byte_raw(byte)? else {
             return Ok(None);
@@ -209,9 +243,11 @@ impl SmartAudioParser {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
     use super::*;
     use crate::parser::RawSmartAudioFrame;
     use crate::parser::SmartAudioError;
+    use std::vec::Vec;
 
     #[test]
     fn test_get_settings_v1_0_parsing() {
@@ -371,5 +407,90 @@ mod tests {
 
         let result = parser.push_byte(raw[raw.len() - 1]);
         assert!(matches!(result, Err(SmartAudioError::InvalidCrc { .. })));
+    }
+
+    #[test]
+    fn test_iterator() {
+        let raw: [u8; 72] = [
+            0xAA, 0x55, 0x01, 0x06, 0x00, 0x00, 0x01, 0x16, 0xE9, 0x4D, // frame0
+            0xAA, 0x55, 0x09, 0x06, 0x01, 0x00, 0x1A, 0x16, 0xE9, 0x0A, // frome1
+            0xAA, 0x55, 0x11, 0x0C, 0x00, 0x00, 0x00, 0x16, 0xE9, 0x0E, 0x03, 0x00, 0x0E, 0x14,
+            0x1A, 0x01, // frame2
+            0xAA, 0x55, 0x02, 0x03, 0x00, 0x01, 0x0F, // frame3
+            0xAA, 0x55, 0x02, 0x03, 0x0E, 0x01, 0x6D, // frame4
+            0xAA, 0x55, 0x03, 0x03, 0x00, 0x01, 0x4A, // frame5
+            0xAA, 0x55, 0x04, 0x04, 0x16, 0xE9, 0x01, 0xF8, // frame6
+            0xAA, 0x55, 0x05, 0x03, 0x0A, 0x01, 0x4F, // frame7
+        ];
+
+        let frame0 = Settings {
+            version: Version::V1_0,
+            channel: 0,
+            power_level: 0,
+            frequency: 5865,
+            unlocked: false,
+            user_frequency_mode: true,
+            pitmode_enabled: false,
+            pitmode_in_range_active: false,
+            pitmode_out_range_active: false,
+            power_settings: None,
+        };
+        let frame1 = Settings {
+            version: Version::V2_0,
+            channel: 1,
+            power_level: 0,
+            frequency: 5865,
+            unlocked: true,
+            user_frequency_mode: false,
+            pitmode_enabled: true,
+            pitmode_in_range_active: false,
+            pitmode_out_range_active: true,
+            power_settings: None,
+        };
+        let frame2 = Settings {
+            version: Version::V2_1,
+            channel: 0,
+            power_level: 0,
+            frequency: 5865,
+            unlocked: false,
+            user_frequency_mode: false,
+            pitmode_enabled: false,
+            pitmode_in_range_active: false,
+            pitmode_out_range_active: false,
+            power_settings: Some(PowerSettings {
+                current_power: 14,
+                num_power_levels: 3,
+                dbm_level_1: 0,
+                dbm_level_2: 14,
+                dbm_level_3: 20,
+                dbm_level_4: 26,
+            }),
+        };
+        let frame3 = SetPowerResponse { power: 0 };
+        let frame4 = SetPowerResponse { power: 14 };
+        let frame5 = SetChannelResponse { channel: 0 };
+        let frame6 = SetFrequencyResponse { frequency: 5865 };
+        let frame7 = SetModeResponse {
+            pitmode_in_range_active: false,
+            pitmode_out_range_active: true,
+            pitmode_enabled: false,
+            unlocked: true,
+        };
+        let mut parser = SmartAudioParser::new();
+        let responses: Vec<_> = parser
+            .iter_frames(&raw)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(responses.len(), 8);
+
+        assert!(matches!(&responses[0], Response::GetSettings(actual) if actual == &frame0));
+        assert!(matches!(&responses[1], Response::GetSettings(actual) if actual == &frame1));
+        assert!(matches!(&responses[2], Response::GetSettings(actual) if actual == &frame2));
+        assert!(matches!(&responses[3], Response::SetPower(actual) if actual == &frame3));
+        assert!(matches!(&responses[4], Response::SetPower(actual) if actual == &frame4));
+        assert!(matches!(&responses[5], Response::SetChannel(actual) if actual == &frame5));
+        assert!(matches!(&responses[6], Response::SetFrequency(actual) if actual == &frame6));
+        assert!(matches!(&responses[7], Response::SetMode(actual) if actual == &frame7));
     }
 }
