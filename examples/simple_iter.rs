@@ -16,7 +16,7 @@ fn main() {
     println!("Parssing frame from buffer using iterator:");
 
     let mut parser = SmartAudioParser::new();
-    for frame in parser.iter_frames(&raw[..]) {
+    for frame in parser.iter_responses(&raw[..]) {
         println!("{:#?}", frame.unwrap())
     }
 }

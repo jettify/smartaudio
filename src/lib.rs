@@ -3,8 +3,8 @@
 #![doc = include_str!("../README.md")]
 pub mod commands;
 pub(crate) mod constants;
-pub mod frames;
 pub mod parser;
+pub mod responses;
 
 //Command frames
 pub use commands::GetSettingsCommand;
@@ -15,13 +15,13 @@ pub use commands::SetPowerCommand;
 pub use commands::SmartAudioCommand;
 
 // Response frames
-pub use frames::Response;
-pub use frames::SetChannelResponse;
-pub use frames::SetFrequencyResponse;
-pub use frames::SetModeResponse;
-pub use frames::SetPowerResponse;
-pub use frames::Settings;
-pub use frames::SmartAudioReponse;
+pub use responses::Response;
+pub use responses::SetChannelResponse;
+pub use responses::SetFrequencyResponse;
+pub use responses::SetModeResponse;
+pub use responses::SetPowerResponse;
+pub use responses::Settings;
+pub use responses::SmartAudioReponse;
 // Parsing
 pub use parser::RawSmartAudioFrame;
 pub use parser::SmartAudioError;

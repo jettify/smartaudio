@@ -199,7 +199,7 @@ impl Response {
 }
 
 impl SmartAudioParser {
-    pub fn iter_frames<'a, 'b>(&'a mut self, buffer: &'b [u8]) -> ResponseIterator<'a, 'b> {
+    pub fn iter_responses<'a, 'b>(&'a mut self, buffer: &'b [u8]) -> ResponseIterator<'a, 'b> {
         ResponseIterator {
             parser: self,
             buffer,
@@ -478,7 +478,7 @@ mod tests {
         };
         let mut parser = SmartAudioParser::new();
         let responses: Vec<_> = parser
-            .iter_frames(&raw)
+            .iter_responses(&raw)
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
 
