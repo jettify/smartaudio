@@ -15,9 +15,38 @@ This is a `no_std` platform-agnostic implementation of the TBS `SmartAudio` prot
 
 ## Usage Example
 
-Here is a basic example of how to parse a raw `SmartAudio` frame:
+Here is a basic example of how to parse buffer using iterator:
 
 ```rust
+
+use smartaudio::SmartAudioParser;
+
+fn main() {
+    let raw: [u8; 72] = [
+        0xAA, 0x55, 0x01, 0x06, 0x00, 0x00, 0x01, 0x16, 0xE9, 0x4D, // frame0
+        0xAA, 0x55, 0x09, 0x06, 0x01, 0x00, 0x1A, 0x16, 0xE9, 0x0A, // frome1
+        0xAA, 0x55, 0x11, 0x0C, 0x00, 0x00, 0x00, 0x16, 0xE9, 0x0E, 0x03, 0x00, 0x0E, 0x14, 0x1A,
+        0x01, // frame2
+        0xAA, 0x55, 0x02, 0x03, 0x00, 0x01, 0x0F, // frame3
+        0xAA, 0x55, 0x02, 0x03, 0x0E, 0x01, 0x6D, // frame4
+        0xAA, 0x55, 0x03, 0x03, 0x00, 0x01, 0x4A, // frame5
+        0xAA, 0x55, 0x04, 0x04, 0x16, 0xE9, 0x01, 0xF8, // frame6
+        0xAA, 0x55, 0x05, 0x03, 0x0A, 0x01, 0x4F, // frame7
+    ];
+
+    println!("Parssing frame from buffer using iterator:");
+
+    let mut parser = SmartAudioParser::new();
+    for frame in parser.iter_responses(&raw[..]) {
+        println!("{:#?}", frame.unwrap())
+    }
+}
+```
+
+Here is a basic example feeding data stream one byte at time:
+
+```rust
+use smartaudio::Response;
 use smartaudio::SmartAudioParser;
 
 fn main() {
@@ -33,16 +62,24 @@ fn main() {
         0x16, 0xE9, // Current Frequency 5865
         0x0A, // CRC8
     ];
-    println!("Parssing packet:");
+    println!("Parssing raw packet:");
     for b in &raw_settings_v20[0..raw_settings_v20.len()] {
-        let reult = parser.push_byte_raw(*b);
+        let reult = parser.push_byte(*b);
         match reult {
-            Ok(Some(f)) => println!("{:?}", f),
+            Ok(Some(Response::GetSettings(settings))) => {
+                println!("{:#?}", settings);
+                println!("\n");
+                println!("Version:     {:?}", settings.version);
+                println!("Channel:     {:?}", settings.channel);
+                println!("Power Level: {:?}", settings.power_level);
+                println!("Unlocked:    {:?}", settings.unlocked);
+            }
             Err(e) => eprintln!("Error parsing packet: {:?}", e),
             _ => (),
         }
     }
 }
+
 ```
 
 ## Installation
