@@ -389,10 +389,7 @@ mod tests {
             pitmode_out_range_active: true,
             power_settings: None,
         };
-        match result {
-            Ok(Some(Response::GetSettings(actual))) => assert_eq!(actual, expected),
-            other => panic!("Unexpected result: {:?}", other),
-        }
+        assert!(matches!(result, Ok(Some(Response::GetSettings(actual))) if actual == expected));
     }
 
     #[test]
