@@ -82,10 +82,10 @@ pub struct SetModeCommand {
 
 impl SmartAudioCommand for SetModeCommand {
     fn to_bytes(&self, buffer: &mut [u8]) -> Result<usize, SmartAudioError> {
-        let mode = (self.pitmode_in_range_active as u8 * mode_flags::PITMODE_IN_RANGE)
-            | (self.pitmode_out_range_active as u8 * mode_flags::PITMODE_OUT_RANGE)
-            | (self.pitmode_enabled as u8 * mode_flags::PITMODE_ENABLED)
-            | (self.unlocked as u8 * mode_flags::UNLOCKED);
+        let mode = (u8::from(self.pitmode_in_range_active) * mode_flags::PITMODE_IN_RANGE)
+            | (u8::from(self.pitmode_out_range_active) * mode_flags::PITMODE_OUT_RANGE)
+            | (u8::from(self.pitmode_enabled) * mode_flags::PITMODE_ENABLED)
+            | (u8::from(self.unlocked) * mode_flags::UNLOCKED);
         let payload = [mode];
         frame_payload(buffer, command::SET_MODE, &payload)
     }
