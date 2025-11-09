@@ -157,11 +157,11 @@ impl SmartAudioReponse for Settings {
             channel,
             power_level,
             frequency,
+            unlocked,
+            user_frequency_mode,
             pitmode_enabled,
             pitmode_in_range_active,
             pitmode_out_range_active,
-            unlocked,
-            user_frequency_mode,
             power_settings,
         }
     }
@@ -214,7 +214,7 @@ pub struct ResponseIterator<'a, 'b> {
     position: usize,
 }
 
-impl<'a, 'b> Iterator for ResponseIterator<'a, 'b> {
+impl Iterator for ResponseIterator<'_, '_> {
     type Item = Result<Response, SmartAudioError>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -224,7 +224,7 @@ impl<'a, 'b> Iterator for ResponseIterator<'a, 'b> {
 
             match self.parser.push_byte(byte) {
                 Ok(Some(response)) => return Some(Ok(response)),
-                Ok(None) => continue, // Continue feeding bytes
+                Ok(None) => (),
                 Err(e) => return Some(Err(e)),
             }
         }
