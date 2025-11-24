@@ -7,6 +7,8 @@ pub trait SmartAudioCommand {
     fn to_bytes(&self, buffer: &mut [u8]) -> Result<usize, SmartAudioError>;
 }
 
+/// Command to get the current settings from the VTX.
+/// Corresponds to SmartAudio command `0x01`.
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GetSettingsCommand {}
 
@@ -17,11 +19,17 @@ impl SmartAudioCommand for GetSettingsCommand {
     }
 }
 
+/// VTX power setting.
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Power {
+    /// Power level for SmartAudio V1 and V2.
+    /// For V1, this is a direct DAC value.
+    /// For V2, this is an index into a lookup table (e.g., 0 for 25mW, 1 for 200mW).
     Level(u8),
+    /// Power in dBm for SmartAudio V2.1.
+    /// The VTX will set the power to the closest lower supported power level.
     dBm(u8),
 }
 
@@ -40,6 +48,8 @@ impl From<Power> for u8 {
     }
 }
 
+/// Command to set the VTX power.
+/// Corresponds to SmartAudio command `0x02`.
 pub struct SetPowerCommand {
     pub power: Power,
 }
@@ -51,7 +61,10 @@ impl SmartAudioCommand for SetPowerCommand {
     }
 }
 
+/// Command to set the VTX channel.
+/// Corresponds to SmartAudio command `0x03`.
 pub struct SetChannelCommand {
+    /// Channel index (0-39).
     pub channel: u8,
 }
 
@@ -62,7 +75,10 @@ impl SmartAudioCommand for SetChannelCommand {
     }
 }
 
+/// Command to set the VTX frequency.
+/// Corresponds to SmartAudio command `0x04`.
 pub struct SetFrequencyCommand {
+    /// Frequency in MHz (e.g., 5865).
     pub frequency: u16,
 }
 
@@ -73,10 +89,20 @@ impl SmartAudioCommand for SetFrequencyCommand {
     }
 }
 
+/// Command to set the VTX operation mode (SmartAudio V2+).
+/// Corresponds to SmartAudio command `0x05`.
 pub struct SetModeCommand {
+    /// Activate "In Range Pit Mode".
+    /// Reduces output power to a minimum at the current frequency.
     pub pitmode_in_range_active: bool,
+    /// Activate "Out Range Pit Mode".
+    /// Reduces output power to a minimum and sets the frequency to 5584 MHz.
+    /// Not supported in SmartAudio V2.1 or newer (will default to in-range pit mode).
     pub pitmode_out_range_active: bool,
+    /// If `true`, this *deactivates* pit mode. This is counter-intuitive.
+    /// The flag in the payload (`0x04`) is for "Quit PIT MODE".
     pub pitmode_enabled: bool,
+    /// Unlock the VTX.
     pub unlocked: bool,
 }
 

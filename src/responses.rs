@@ -4,6 +4,8 @@ use crate::constants::response as resp;
 use crate::SmartAudioParser;
 use crate::{parser::SmartAudioError, RawSmartAudioFrame};
 
+/// The SmartAudio protocol version.
+/// This is determined from the command byte of a `GetSettings` response.
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Version {
@@ -31,35 +33,55 @@ pub trait SmartAudioReponse {
     fn from_raw_frame(raw_frame: &RawSmartAudioFrame<'_>) -> Self;
 }
 
+/// Detailed power settings, included in `GetSettings` response for SmartAudio V2.1+.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct PowerSettings {
+    /// The currently selected power in dBm.
     pub current_power: u8,
+    /// The number of available power levels.
     pub num_power_levels: u8,
+    /// Power level 1 in dBm.
     pub dbm_level_1: u8,
+    /// Power level 2 in dBm.
     pub dbm_level_2: u8,
+    /// Power level 3 in dBm.
     pub dbm_level_3: u8,
+    /// Power level 4 in dBm.
     pub dbm_level_4: u8,
 }
 
+/// The VTX settings, returned in response to a `GetSettingsCommand`.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Settings {
+    /// SmartAudio protocol version.
     pub version: Version,
+    /// Current channel (0-39).
     pub channel: u8,
+    /// Current power level index.
     pub power_level: u8,
+    /// Current frequency in MHz.
     pub frequency: u16,
+    /// VTX is unlocked.
     pub unlocked: bool,
+    /// VTX is in user-defined frequency mode.
     pub user_frequency_mode: bool,
+    /// Pit mode is currently active.
     pub pitmode_enabled: bool,
+    /// In-range pit mode is configured.
     pub pitmode_in_range_active: bool,
+    /// Out-of-range pit mode is configured.
     pub pitmode_out_range_active: bool,
+    /// Detailed power settings for SmartAudio V2.1+.
     pub power_settings: Option<PowerSettings>,
 }
 
+/// Response to a `SetPowerCommand`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SetPowerResponse {
+    /// The new power. For V1/V2 this is a level index, for V2.1 it's in dBm.
     power: u8,
 }
 
@@ -71,9 +93,11 @@ impl SmartAudioReponse for SetPowerResponse {
     }
 }
 
+/// Response to a `SetChannelCommand`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SetChannelResponse {
+    /// The new channel index (0-39).
     channel: u8,
 }
 
@@ -85,9 +109,11 @@ impl SmartAudioReponse for SetChannelResponse {
     }
 }
 
+/// Response to a `SetFrequencyCommand`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SetFrequencyResponse {
+    /// The new frequency in MHz.
     frequency: u16,
 }
 
@@ -100,13 +126,18 @@ impl SmartAudioReponse for SetFrequencyResponse {
     }
 }
 
+/// Response to a `SetModeCommand`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SetModeResponse {
-    pitmode_in_range_active: bool,
-    pitmode_out_range_active: bool,
-    pitmode_enabled: bool,
-    unlocked: bool,
+    /// In-range pit mode is active.
+    pub pitmode_in_range_active: bool,
+    /// Out-of-range pit mode is active.
+    pub pitmode_out_range_active: bool,
+    /// Pit mode is running.
+    pub pitmode_enabled: bool,
+    /// VTX is unlocked.
+    pub unlocked: bool,
 }
 
 impl SmartAudioReponse for SetModeResponse {
@@ -167,14 +198,21 @@ impl SmartAudioReponse for Settings {
     }
 }
 
+/// A parsed response from the VTX.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Response {
+    /// Current VTX settings (`GetSettingsCommand` response).
     GetSettings(Settings),
+    /// Power setting confirmation (`SetPowerCommand` response).
     SetPower(SetPowerResponse),
+    /// Channel setting confirmation (`SetChannelCommand` response).
     SetChannel(SetChannelResponse),
+    /// Frequency setting confirmation (`SetFrequencyCommand` response).
     SetFrequency(SetFrequencyResponse),
+    /// Mode setting confirmation (`SetModeCommand` response).
     SetMode(SetModeResponse),
+    /// An unknown or unsupported response.
     Unknown(u8),
 }
 
