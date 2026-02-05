@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/jettify/smartaudio/compare/v0.2.1...v0.3.0) - 2026-02-05
+
+### Fixed
+
+- [**breaking**] Fix typos in public APIs. ([#26](https://github.com/jettify/smartaudio/issues/26))
+
+### Other
+
+- Document commands and resonses strcts. ([#25](https://github.com/jettify/smartaudio/issues/25))
+- Address idiomatic rust lints. ([#23](https://github.com/jettify/smartaudio/issues/23))
+
 ## [0.2.1](https://github.com/jettify/smartaudio/compare/v0.2.0...v0.2.1) - 2025-11-07
 
 ### Added
