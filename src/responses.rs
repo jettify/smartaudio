@@ -20,7 +20,7 @@ impl From<u8> for Version {
     fn from(v: u8) -> Self {
         match v {
             // Command byte for getting settings also indicates
-            // versoin of protocol.
+            // Version of protocol.
             resp::GET_SETTINGS_V1_0 => Self::V1_0,
             resp::GET_SETTINGS_V2_0 => Self::V2_0,
             resp::GET_SETTINGS_V2_1 => Self::V2_1,
@@ -29,7 +29,7 @@ impl From<u8> for Version {
     }
 }
 
-pub trait SmartAudioReponse {
+pub trait SmartAudioResponse {
     fn from_raw_frame(raw_frame: &RawSmartAudioFrame<'_>) -> Self;
 }
 
@@ -85,7 +85,7 @@ pub struct SetPowerResponse {
     power: u8,
 }
 
-impl SmartAudioReponse for SetPowerResponse {
+impl SmartAudioResponse for SetPowerResponse {
     fn from_raw_frame(raw_frame: &RawSmartAudioFrame<'_>) -> Self {
         Self {
             power: raw_frame.payload()[0],
@@ -101,7 +101,7 @@ pub struct SetChannelResponse {
     channel: u8,
 }
 
-impl SmartAudioReponse for SetChannelResponse {
+impl SmartAudioResponse for SetChannelResponse {
     fn from_raw_frame(raw_frame: &RawSmartAudioFrame<'_>) -> Self {
         Self {
             channel: raw_frame.payload()[0],
@@ -117,7 +117,7 @@ pub struct SetFrequencyResponse {
     frequency: u16,
 }
 
-impl SmartAudioReponse for SetFrequencyResponse {
+impl SmartAudioResponse for SetFrequencyResponse {
     fn from_raw_frame(raw_frame: &RawSmartAudioFrame<'_>) -> Self {
         let buffer = raw_frame.payload();
         Self {
@@ -140,7 +140,7 @@ pub struct SetModeResponse {
     pub unlocked: bool,
 }
 
-impl SmartAudioReponse for SetModeResponse {
+impl SmartAudioResponse for SetModeResponse {
     fn from_raw_frame(raw_frame: &RawSmartAudioFrame<'_>) -> Self {
         let mode = raw_frame.payload()[0];
         Self {
@@ -152,11 +152,11 @@ impl SmartAudioReponse for SetModeResponse {
     }
 }
 
-impl SmartAudioReponse for Settings {
+impl SmartAudioResponse for Settings {
     fn from_raw_frame(raw_frame: &RawSmartAudioFrame<'_>) -> Self {
         let b = raw_frame.payload();
 
-        let version = Version::from(raw_frame.commnand());
+        let version = Version::from(raw_frame.command());
         let channel = b[0];
         let power_level = b[1];
 
@@ -218,7 +218,7 @@ pub enum Response {
 
 impl Response {
     pub fn parse(raw_frame: &RawSmartAudioFrame<'_>) -> Result<Self, SmartAudioError> {
-        let cmd = raw_frame.commnand();
+        let cmd = raw_frame.command();
         match cmd {
             resp::GET_SETTINGS_V1_0 | resp::GET_SETTINGS_V2_0 | resp::GET_SETTINGS_V2_1 => {
                 Ok(Self::GetSettings(Settings::from_raw_frame(raw_frame)))
@@ -448,7 +448,7 @@ mod tests {
     fn test_iterator() {
         let raw: [u8; 72] = [
             0xAA, 0x55, 0x01, 0x06, 0x00, 0x00, 0x01, 0x16, 0xE9, 0x4D, // frame0
-            0xAA, 0x55, 0x09, 0x06, 0x01, 0x00, 0x1A, 0x16, 0xE9, 0x0A, // frome1
+            0xAA, 0x55, 0x09, 0x06, 0x01, 0x00, 0x1A, 0x16, 0xE9, 0x0A, // frame1
             0xAA, 0x55, 0x11, 0x0C, 0x00, 0x00, 0x00, 0x16, 0xE9, 0x0E, 0x03, 0x00, 0x0E, 0x14,
             0x1A, 0x01, // frame2
             0xAA, 0x55, 0x02, 0x03, 0x00, 0x01, 0x0F, // frame3

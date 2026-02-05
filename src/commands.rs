@@ -118,7 +118,7 @@ impl SmartAudioCommand for SetModeCommand {
 }
 
 #[cfg(test)]
-mod tesst {
+mod tests {
     use super::*;
 
     #[test]
