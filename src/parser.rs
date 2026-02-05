@@ -23,7 +23,7 @@ pub enum SmartAudioError {
     InvalidHeader,
     UnknownCommand(u8),
     InvalidPayloadLength,
-    UnexpetedDataForState(State, u8),
+    UnexpectedDataForState(State, u8),
 }
 
 pub fn frame_payload(
@@ -72,7 +72,7 @@ impl<'a> RawSmartAudioFrame<'a> {
         }
     }
 
-    pub fn commnand(&self) -> u8 {
+    pub fn command(&self) -> u8 {
         self.bytes[2]
     }
 
@@ -174,7 +174,7 @@ impl SmartAudioParser {
             _ => {
                 let current_state = self.state;
                 self.reset();
-                Err(SmartAudioError::UnexpetedDataForState(current_state, byte))
+                Err(SmartAudioError::UnexpectedDataForState(current_state, byte))
             }
         }
     }
@@ -192,7 +192,7 @@ mod tests {
     use super::*;
     #[test]
     fn test_raw_responses_parsing() {
-        // Raw data obteainted form protcol specificaton examples
+        // Raw data obtained from protocol specification examples.
         // https://www.team-blacksheep.com/tbs_smartaudio_rev09.pdf
         let raw_settings_v10: [u8; 10] = [
             0xAA, 0x55, // Header

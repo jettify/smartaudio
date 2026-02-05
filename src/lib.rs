@@ -21,7 +21,7 @@ pub use responses::SetFrequencyResponse;
 pub use responses::SetModeResponse;
 pub use responses::SetPowerResponse;
 pub use responses::Settings;
-pub use responses::SmartAudioReponse;
+pub use responses::SmartAudioResponse;
 // Parsing
 pub use parser::RawSmartAudioFrame;
 pub use parser::SmartAudioError;
