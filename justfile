@@ -2,6 +2,10 @@
 default:
   @just --list
 
+alias b := build
+alias t := test
+alias l := lint
+
 # Run cargo doc and open result in browser
 [group('build')]
 doc:
@@ -10,12 +14,12 @@ doc:
 # Run cargo build
 [group('build')]
 build:
-  cargo build --verbose
+  cargo build
 
 # Run cargo clean
 [group('build')]
 clean:
-  cargo clean --verbose
+  cargo clean
 
 # Install cargo tools used in package maintenance
 [group('build')]
@@ -52,21 +56,6 @@ audit:
 outdated:
   cargo outdated
 
-# Run example that parses hard codded buffer and print byte slices that contain valid frames.
-[group('examples')]
-example_raw_frame:
-  cargo run --example=simple_raw_frame
-
-# Run example that parses hard codded buffer and print parsed frames.
-[group('examples')]
-example_frame:
-  cargo run --example=simple_frame
-
-# Run example that parses hard codded buffer and print parsed frames using iterator.
-[group('examples')]
-example_iter:
-  cargo run --example=simple_iter
-
 set positional-arguments
 # Run tests for all features
 [group('test')]
@@ -82,6 +71,6 @@ cov:
 [group('test')]
 ci:
   cargo clippy --all -- -D warnings
-  cargo build --verbose
-  cargo test --all-features --verbose
+  cargo build
+  cargo test --all-features
   cargo test --examples
