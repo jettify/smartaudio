@@ -5,6 +5,13 @@ use crate::parser::SmartAudioError;
 
 pub trait SmartAudioCommand {
     fn to_bytes(&self, buffer: &mut [u8]) -> Result<usize, SmartAudioError>;
+
+    fn to_frame<'a>(&self, buffer: &'a mut [u8]) -> Result<&'a [u8], SmartAudioError> {
+        let len = self.to_bytes(buffer)?;
+        buffer
+            .get(..len)
+            .ok_or(SmartAudioError::InvalidPayloadLength)
+    }
 }
 
 /// Command to get the current settings from the VTX.
@@ -20,7 +27,7 @@ impl SmartAudioCommand for GetSettingsCommand {
 }
 
 /// VTX power setting.
-#[allow(non_camel_case_types)]
+#[expect(non_camel_case_types, reason = "Naming more alinged with protocol")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Power {

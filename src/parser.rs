@@ -32,18 +32,30 @@ pub fn frame_payload(
     payload: &[u8],
 ) -> Result<usize, SmartAudioError> {
     let payload_size = payload.len();
-    if buffer.len() < 2 + 1 + 1 + payload_size + 1 {
+    let frame_len = 2 + 1 + 1 + payload_size + 1;
+    if buffer.len() < frame_len {
         return Err(SmartAudioError::BufferTooSmall(buffer.len()));
     }
-    buffer[0] = constants::HEADER_BYTE_1;
-    buffer[1] = constants::HEADER_BYTE_2;
-    buffer[2] = command;
-    buffer[3] = payload_size as u8;
-    buffer[4..4 + payload_size].copy_from_slice(payload);
+    let frame = buffer
+        .get_mut(..frame_len)
+        .ok_or(SmartAudioError::BufferTooSmall(frame_len))?;
+    let (head, crc_slot) = frame.split_at_mut(frame_len - 1);
+    let (header, body) = head.split_at_mut(4);
+    let [h1, h2, cmd, len] = header else {
+        return Err(SmartAudioError::InvalidPayloadLength);
+    };
+    *h1 = constants::HEADER_BYTE_1;
+    *h2 = constants::HEADER_BYTE_2;
+    *cmd = command;
+    *len = payload_size as u8;
+    body.copy_from_slice(payload);
 
-    let crc = crc8_dvb_s2(&buffer[0..payload_size + 4]);
-    buffer[payload_size + 4] = crc;
-    Ok(payload_size + 5)
+    let crc = crc8_dvb_s2(head);
+    let [crc_byte] = crc_slot else {
+        return Err(SmartAudioError::InvalidPayloadLength);
+    };
+    *crc_byte = crc;
+    Ok(frame_len)
 }
 
 #[derive(Debug, Default, Eq, PartialEq, Copy, Clone)]
@@ -61,23 +73,40 @@ pub enum State {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RawSmartAudioFrame<'a> {
     bytes: &'a [u8],
+    command: u8,
+    payload: &'a [u8],
+    crc: u8,
 }
 
 impl<'a> RawSmartAudioFrame<'a> {
-    pub(crate) fn new(bytes: &'a [u8]) -> Option<Self> {
-        if bytes.len() >= 4 {
-            Some(Self { bytes })
-        } else {
-            None
+    pub(crate) fn new(bytes: &'a [u8]) -> Result<Self, SmartAudioError> {
+        let Some((&command, tail)) = bytes.get(2).zip(bytes.get(3..)) else {
+            return Err(SmartAudioError::InvalidPayloadLength);
+        };
+        let Some((&crc, without_crc)) = bytes.last().zip(bytes.get(4..bytes.len() - 1)) else {
+            return Err(SmartAudioError::InvalidPayloadLength);
+        };
+        let payload_size = tail
+            .first()
+            .copied()
+            .ok_or(SmartAudioError::InvalidPayloadLength)? as usize;
+        if payload_size == 0 || without_crc.len() + 1 != payload_size {
+            return Err(SmartAudioError::InvalidPayloadLength);
         }
+        Ok(Self {
+            bytes,
+            command,
+            payload: without_crc,
+            crc,
+        })
     }
 
     pub fn command(&self) -> u8 {
-        self.bytes[2]
+        self.command
     }
 
     pub fn payload(&self) -> &[u8] {
-        &self.bytes[4..self.bytes.len() - 1]
+        self.payload
     }
 
     pub fn len(&self) -> usize {
@@ -89,9 +118,8 @@ impl<'a> RawSmartAudioFrame<'a> {
     }
 
     /// Returns the CRC check byte of the frame.
-    #[expect(clippy::missing_panics_doc, reason = "infallible")]
     pub fn crc(&self) -> u8 {
-        *self.bytes.last().expect("infallible due to length check")
+        self.crc
     }
 }
 
@@ -120,22 +148,31 @@ impl SmartAudioParser {
         &mut self,
         byte: u8,
     ) -> Result<Option<RawSmartAudioFrame<'_>>, SmartAudioError> {
+        let write_next = |this: &mut Self, value: u8| -> Result<(), SmartAudioError> {
+            let slot = this
+                .buffer
+                .get_mut(this.position)
+                .ok_or(SmartAudioError::InvalidPayloadLength)?;
+            *slot = value;
+            Ok(())
+        };
+
         match self.state {
             State::AwaitingHeader1 if byte == constants::HEADER_BYTE_1 => {
                 self.position = 0;
-                self.buffer[self.position] = byte;
+                write_next(self, byte)?;
                 self.state = State::AwaitingHeader2;
                 Ok(None)
             }
             State::AwaitingHeader2 if byte == constants::HEADER_BYTE_2 => {
                 self.position += 1;
-                self.buffer[self.position] = byte;
+                write_next(self, byte)?;
                 self.state = State::AwaitingCommand;
                 Ok(None)
             }
             State::AwaitingCommand => {
                 self.position += 1;
-                self.buffer[self.position] = byte;
+                write_next(self, byte)?;
                 self.state = State::AwaitingLength;
                 Ok(None)
             }
@@ -144,20 +181,27 @@ impl SmartAudioParser {
                     .contains(&(byte as usize)) =>
             {
                 self.position += 1;
-                self.buffer[self.position] = byte;
+                write_next(self, byte)?;
                 self.state = State::Reading(byte as usize);
                 Ok(None)
             }
             State::Reading(n) => {
                 self.position += 1;
-                self.buffer[self.position] = byte;
+                write_next(self, byte)?;
                 if self.position == n + 3 {
                     let start = 0;
                     let end = self.position + 1;
 
-                    let calculated_crc = crc8_dvb_s2(&self.buffer[2..end - 1]);
+                    let crc_data = self
+                        .buffer
+                        .get(2..end - 1)
+                        .ok_or(SmartAudioError::InvalidPayloadLength)?;
+                    let calculated_crc = crc8_dvb_s2(crc_data);
 
-                    let frame_crc = self.buffer[self.position];
+                    let frame_crc = *self
+                        .buffer
+                        .get(self.position)
+                        .ok_or(SmartAudioError::InvalidPayloadLength)?;
                     if frame_crc != calculated_crc {
                         return Err(SmartAudioError::InvalidCrc {
                             frame_crc,
@@ -165,8 +209,11 @@ impl SmartAudioParser {
                         });
                     }
                     self.reset();
-                    let bytes = &self.buffer[start..end];
-                    Ok(RawSmartAudioFrame::new(bytes))
+                    let bytes = self
+                        .buffer
+                        .get(start..end)
+                        .ok_or(SmartAudioError::InvalidPayloadLength)?;
+                    Ok(Some(RawSmartAudioFrame::new(bytes)?))
                 } else {
                     Ok(None)
                 }

@@ -29,8 +29,8 @@ impl From<u8> for Version {
     }
 }
 
-pub trait SmartAudioResponse {
-    fn from_raw_frame(raw_frame: &RawSmartAudioFrame<'_>) -> Self;
+pub trait SmartAudioResponse: Sized {
+    fn try_from_raw_frame(raw_frame: &RawSmartAudioFrame<'_>) -> Result<Self, SmartAudioError>;
 }
 
 /// Detailed power settings, included in `GetSettings` response for SmartAudio V2.1+.
@@ -86,10 +86,8 @@ pub struct SetPowerResponse {
 }
 
 impl SmartAudioResponse for SetPowerResponse {
-    fn from_raw_frame(raw_frame: &RawSmartAudioFrame<'_>) -> Self {
-        Self {
-            power: raw_frame.payload()[0],
-        }
+    fn try_from_raw_frame(raw_frame: &RawSmartAudioFrame<'_>) -> Result<Self, SmartAudioError> {
+        Self::try_from(raw_frame)
     }
 }
 
@@ -102,10 +100,8 @@ pub struct SetChannelResponse {
 }
 
 impl SmartAudioResponse for SetChannelResponse {
-    fn from_raw_frame(raw_frame: &RawSmartAudioFrame<'_>) -> Self {
-        Self {
-            channel: raw_frame.payload()[0],
-        }
+    fn try_from_raw_frame(raw_frame: &RawSmartAudioFrame<'_>) -> Result<Self, SmartAudioError> {
+        Self::try_from(raw_frame)
     }
 }
 
@@ -118,11 +114,8 @@ pub struct SetFrequencyResponse {
 }
 
 impl SmartAudioResponse for SetFrequencyResponse {
-    fn from_raw_frame(raw_frame: &RawSmartAudioFrame<'_>) -> Self {
-        let buffer = raw_frame.payload();
-        Self {
-            frequency: u16::from_be_bytes([buffer[0], buffer[1]]),
-        }
+    fn try_from_raw_frame(raw_frame: &RawSmartAudioFrame<'_>) -> Result<Self, SmartAudioError> {
+        Self::try_from(raw_frame)
     }
 }
 
@@ -141,52 +134,109 @@ pub struct SetModeResponse {
 }
 
 impl SmartAudioResponse for SetModeResponse {
-    fn from_raw_frame(raw_frame: &RawSmartAudioFrame<'_>) -> Self {
-        let mode = raw_frame.payload()[0];
-        Self {
-            pitmode_in_range_active: mode & mode_flags::PITMODE_IN_RANGE != 0,
-            pitmode_out_range_active: mode & mode_flags::PITMODE_OUT_RANGE != 0,
-            pitmode_enabled: mode & mode_flags::PITMODE_ENABLED != 0,
-            unlocked: mode & mode_flags::UNLOCKED != 0,
-        }
+    fn try_from_raw_frame(raw_frame: &RawSmartAudioFrame<'_>) -> Result<Self, SmartAudioError> {
+        Self::try_from(raw_frame)
     }
 }
 
 impl SmartAudioResponse for Settings {
-    fn from_raw_frame(raw_frame: &RawSmartAudioFrame<'_>) -> Self {
-        let b = raw_frame.payload();
+    fn try_from_raw_frame(raw_frame: &RawSmartAudioFrame<'_>) -> Result<Self, SmartAudioError> {
+        Self::try_from(raw_frame)
+    }
+}
+
+impl TryFrom<&RawSmartAudioFrame<'_>> for SetPowerResponse {
+    type Error = SmartAudioError;
+
+    fn try_from(raw_frame: &RawSmartAudioFrame<'_>) -> Result<Self, Self::Error> {
+        let [power, ..] = raw_frame.payload() else {
+            return Err(SmartAudioError::InvalidPayloadLength);
+        };
+        Ok(Self { power: *power })
+    }
+}
+
+impl TryFrom<&RawSmartAudioFrame<'_>> for SetChannelResponse {
+    type Error = SmartAudioError;
+
+    fn try_from(raw_frame: &RawSmartAudioFrame<'_>) -> Result<Self, Self::Error> {
+        let [channel, ..] = raw_frame.payload() else {
+            return Err(SmartAudioError::InvalidPayloadLength);
+        };
+        Ok(Self { channel: *channel })
+    }
+}
+
+impl TryFrom<&RawSmartAudioFrame<'_>> for SetFrequencyResponse {
+    type Error = SmartAudioError;
+
+    fn try_from(raw_frame: &RawSmartAudioFrame<'_>) -> Result<Self, Self::Error> {
+        let [f0, f1, ..] = raw_frame.payload() else {
+            return Err(SmartAudioError::InvalidPayloadLength);
+        };
+        Ok(Self {
+            frequency: u16::from_be_bytes([*f0, *f1]),
+        })
+    }
+}
+
+impl TryFrom<&RawSmartAudioFrame<'_>> for SetModeResponse {
+    type Error = SmartAudioError;
+
+    fn try_from(raw_frame: &RawSmartAudioFrame<'_>) -> Result<Self, Self::Error> {
+        let [mode, ..] = raw_frame.payload() else {
+            return Err(SmartAudioError::InvalidPayloadLength);
+        };
+        Ok(Self {
+            pitmode_in_range_active: mode & mode_flags::PITMODE_IN_RANGE != 0,
+            pitmode_out_range_active: mode & mode_flags::PITMODE_OUT_RANGE != 0,
+            pitmode_enabled: mode & mode_flags::PITMODE_ENABLED != 0,
+            unlocked: mode & mode_flags::UNLOCKED != 0,
+        })
+    }
+}
+
+impl TryFrom<&RawSmartAudioFrame<'_>> for Settings {
+    type Error = SmartAudioError;
+
+    fn try_from(raw_frame: &RawSmartAudioFrame<'_>) -> Result<Self, Self::Error> {
+        let [channel, power_level, mode, f0, f1, rest @ ..] = raw_frame.payload() else {
+            return Err(SmartAudioError::InvalidPayloadLength);
+        };
 
         let version = Version::from(raw_frame.command());
-        let channel = b[0];
-        let power_level = b[1];
 
         // unpack mode
-        let mode = b[2];
         let pitmode_enabled = mode & get_settings_flags::PITMODE_ENABLED != 0;
         let pitmode_in_range_active = mode & get_settings_flags::PITMODE_IN_RANGE != 0;
         let pitmode_out_range_active = mode & get_settings_flags::PITMODE_OUT_RANGE != 0;
         let unlocked = mode & get_settings_flags::UNLOCKED != 0;
         let user_frequency_mode = mode & get_settings_flags::USER_FREQUENCY != 0;
 
-        let frequency = u16::from_be_bytes([b[3], b[4]]);
+        let frequency = u16::from_be_bytes([*f0, *f1]);
 
         let power_settings = if version == Version::V2_1 {
+            let [current_power, num_power_levels, dbm_level_1, dbm_level_2, dbm_level_3, dbm_level_4, ..] =
+                rest
+            else {
+                return Err(SmartAudioError::InvalidPayloadLength);
+            };
             Some(PowerSettings {
-                current_power: b[5],
-                num_power_levels: b[6],
-                dbm_level_1: b[7],
-                dbm_level_2: b[8],
-                dbm_level_3: b[9],
-                dbm_level_4: b[10],
+                current_power: *current_power,
+                num_power_levels: *num_power_levels,
+                dbm_level_1: *dbm_level_1,
+                dbm_level_2: *dbm_level_2,
+                dbm_level_3: *dbm_level_3,
+                dbm_level_4: *dbm_level_4,
             })
         } else {
             None
         };
 
-        Self {
+        Ok(Self {
             version,
-            channel,
-            power_level,
+            channel: *channel,
+            power_level: *power_level,
             frequency,
             unlocked,
             user_frequency_mode,
@@ -194,7 +244,7 @@ impl SmartAudioResponse for Settings {
             pitmode_in_range_active,
             pitmode_out_range_active,
             power_settings,
-        }
+        })
     }
 }
 
@@ -221,22 +271,24 @@ impl Response {
         let cmd = raw_frame.command();
         match cmd {
             resp::GET_SETTINGS_V1_0 | resp::GET_SETTINGS_V2_0 | resp::GET_SETTINGS_V2_1 => {
-                Ok(Self::GetSettings(Settings::from_raw_frame(raw_frame)))
+                Ok(Self::GetSettings(Settings::try_from(raw_frame)?))
             }
-            resp::SET_POWER => Ok(Self::SetPower(SetPowerResponse::from_raw_frame(raw_frame))),
-            resp::SET_CHANNEL => Ok(Self::SetChannel(SetChannelResponse::from_raw_frame(
+            resp::SET_POWER => Ok(Self::SetPower(SetPowerResponse::try_from(raw_frame)?)),
+            resp::SET_CHANNEL => Ok(Self::SetChannel(SetChannelResponse::try_from(raw_frame)?)),
+            resp::SET_FREQUENCY => Ok(Self::SetFrequency(SetFrequencyResponse::try_from(
                 raw_frame,
-            ))),
-            resp::SET_FREQUENCY => Ok(Self::SetFrequency(SetFrequencyResponse::from_raw_frame(
-                raw_frame,
-            ))),
-            resp::SET_MODE => Ok(Self::SetMode(SetModeResponse::from_raw_frame(raw_frame))),
+            )?)),
+            resp::SET_MODE => Ok(Self::SetMode(SetModeResponse::try_from(raw_frame)?)),
             _ => Err(SmartAudioError::InvalidHeader),
         }
     }
 }
 
 impl SmartAudioParser {
+    pub fn parse_bytes<'a, 'b>(&'a mut self, buffer: &'b [u8]) -> ResponseIterator<'a, 'b> {
+        self.iter_responses(buffer)
+    }
+
     pub fn iter_responses<'a, 'b>(&'a mut self, buffer: &'b [u8]) -> ResponseIterator<'a, 'b> {
         ResponseIterator {
             parser: self,
@@ -256,8 +308,7 @@ impl Iterator for ResponseIterator<'_, '_> {
     type Item = Result<Response, SmartAudioError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while self.position < self.buffer.len() {
-            let byte = self.buffer[self.position];
+        while let Some(byte) = self.buffer.get(self.position).copied() {
             self.position += 1;
 
             match self.parser.push_byte(byte) {
@@ -527,5 +578,57 @@ mod tests {
         assert!(matches!(&responses[5], Response::SetChannel(actual) if actual == &frame5));
         assert!(matches!(&responses[6], Response::SetFrequency(actual) if actual == &frame6));
         assert!(matches!(&responses[7], Response::SetMode(actual) if actual == &frame7));
+    }
+
+    #[test]
+    fn test_parse_bytes_multiple_frames() {
+        let raw: [u8; 21] = [
+            0xAA, 0x55, 0x02, 0x03, 0x00, 0x01, 0x0F, // set power
+            0xAA, 0x55, 0x03, 0x03, 0x00, 0x01, 0x4A, // set channel
+            0xAA, 0x55, 0x05, 0x03, 0x0A, 0x01, 0x4F, // set mode
+        ];
+        let mut parser = SmartAudioParser::new();
+        let responses: Vec<_> = parser
+            .parse_bytes(&raw)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(responses.len(), 3);
+        assert!(matches!(
+            &responses[0],
+            Response::SetPower(SetPowerResponse { power: 0 })
+        ));
+        assert!(matches!(
+            &responses[1],
+            Response::SetChannel(SetChannelResponse { channel: 0 })
+        ));
+        assert!(matches!(
+            &responses[2],
+            Response::SetMode(SetModeResponse {
+                pitmode_in_range_active: false,
+                pitmode_out_range_active: true,
+                pitmode_enabled: false,
+                unlocked: true
+            })
+        ));
+    }
+
+    #[test]
+    fn test_parse_bytes_returns_error_on_invalid_crc() {
+        let raw: [u8; 17] = [
+            0xAA, 0x55, 0x02, 0x03, 0x00, 0x01, 0x0F, // valid frame
+            0xAA, 0x55, 0x09, 0x06, 0x01, 0x00, 0x1A, 0x16, 0xE9, 0x0B, // invalid crc
+        ];
+        let mut parser = SmartAudioParser::new();
+        let mut responses = parser.parse_bytes(&raw);
+
+        let first = responses.next().unwrap().unwrap();
+        assert!(matches!(
+            first,
+            Response::SetPower(SetPowerResponse { power: 0 })
+        ));
+
+        let second = responses.next().unwrap();
+        assert!(matches!(second, Err(SmartAudioError::InvalidCrc { .. })));
     }
 }
