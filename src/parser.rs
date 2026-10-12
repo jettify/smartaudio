@@ -203,6 +203,7 @@ impl SmartAudioParser {
                         .get(self.position)
                         .ok_or(SmartAudioError::InvalidPayloadLength)?;
                     if frame_crc != calculated_crc {
+                        self.reset();
                         return Err(SmartAudioError::InvalidCrc {
                             frame_crc,
                             calculated_crc,
@@ -237,6 +238,36 @@ impl Default for SmartAudioParser {
 mod tests {
 
     use super::*;
+
+    #[test]
+    fn test_parses_valid_frame_after_invalid_crc() {
+        let invalid = [0xAA, 0x55, 0x09, 0x06, 0x01, 0x00, 0x1A, 0x16, 0xE9, 0x0B];
+        let valid = [0xAA, 0x55, 0x02, 0x03, 0x00, 0x01, 0x0F];
+        let mut parser = SmartAudioParser::new();
+
+        for &byte in invalid.iter().take(invalid.len() - 1) {
+            assert!(matches!(parser.push_byte_raw(byte), Ok(None)));
+        }
+        assert!(matches!(
+            parser.push_byte_raw(0x0B),
+            Err(SmartAudioError::InvalidCrc {
+                calculated_crc: 0x0A,
+                frame_crc: 0x0B,
+            })
+        ));
+
+        // Recovery must happen automatically, without an explicit reset.
+        for _ in 0..2 {
+            for &byte in valid.iter().take(valid.len() - 1) {
+                assert!(matches!(parser.push_byte_raw(byte), Ok(None)));
+            }
+            let frame = parser.push_byte_raw(0x0F).unwrap().unwrap();
+            assert_eq!(frame.command(), 0x02);
+            assert_eq!(frame.payload(), &[0x00, 0x01]);
+            assert_eq!(frame.crc(), 0x0F);
+        }
+    }
+
     #[test]
     fn test_raw_responses_parsing() {
         // Raw data obtained from protocol specification examples.
