@@ -160,7 +160,10 @@ impl TryFrom<&RawSmartAudioFrame<'_>> for SetPowerResponse {
     type Error = SmartAudioError;
 
     fn try_from(raw_frame: &RawSmartAudioFrame<'_>) -> Result<Self, Self::Error> {
-        let [power, ..] = raw_frame.payload() else {
+        if raw_frame.command() != resp::SET_POWER {
+            return Err(SmartAudioError::UnknownCommand(raw_frame.command()));
+        }
+        let [power, _reserved] = raw_frame.payload() else {
             return Err(SmartAudioError::InvalidPayloadLength);
         };
         Ok(Self { power: *power })
@@ -171,7 +174,10 @@ impl TryFrom<&RawSmartAudioFrame<'_>> for SetChannelResponse {
     type Error = SmartAudioError;
 
     fn try_from(raw_frame: &RawSmartAudioFrame<'_>) -> Result<Self, Self::Error> {
-        let [channel, ..] = raw_frame.payload() else {
+        if raw_frame.command() != resp::SET_CHANNEL {
+            return Err(SmartAudioError::UnknownCommand(raw_frame.command()));
+        }
+        let [channel, _reserved] = raw_frame.payload() else {
             return Err(SmartAudioError::InvalidPayloadLength);
         };
         Ok(Self { channel: *channel })
@@ -182,7 +188,10 @@ impl TryFrom<&RawSmartAudioFrame<'_>> for SetFrequencyResponse {
     type Error = SmartAudioError;
 
     fn try_from(raw_frame: &RawSmartAudioFrame<'_>) -> Result<Self, Self::Error> {
-        let [f0, f1, ..] = raw_frame.payload() else {
+        if raw_frame.command() != resp::SET_FREQUENCY {
+            return Err(SmartAudioError::UnknownCommand(raw_frame.command()));
+        }
+        let [f0, f1, _reserved] = raw_frame.payload() else {
             return Err(SmartAudioError::InvalidPayloadLength);
         };
         Ok(Self {
@@ -195,7 +204,10 @@ impl TryFrom<&RawSmartAudioFrame<'_>> for SetModeResponse {
     type Error = SmartAudioError;
 
     fn try_from(raw_frame: &RawSmartAudioFrame<'_>) -> Result<Self, Self::Error> {
-        let [mode, ..] = raw_frame.payload() else {
+        if raw_frame.command() != resp::SET_MODE {
+            return Err(SmartAudioError::UnknownCommand(raw_frame.command()));
+        }
+        let [mode, _reserved] = raw_frame.payload() else {
             return Err(SmartAudioError::InvalidPayloadLength);
         };
         Ok(Self {
@@ -211,11 +223,13 @@ impl TryFrom<&RawSmartAudioFrame<'_>> for Settings {
     type Error = SmartAudioError;
 
     fn try_from(raw_frame: &RawSmartAudioFrame<'_>) -> Result<Self, Self::Error> {
+        let version = Version::from(raw_frame.command());
+        if version == Version::Unknown {
+            return Err(SmartAudioError::UnknownCommand(raw_frame.command()));
+        }
         let [channel, power_level, mode, f0, f1, rest @ ..] = raw_frame.payload() else {
             return Err(SmartAudioError::InvalidPayloadLength);
         };
-
-        let version = Version::from(raw_frame.command());
 
         // unpack mode
         let pitmode_enabled = mode & get_settings_flags::PITMODE_ENABLED != 0;
@@ -245,6 +259,9 @@ impl TryFrom<&RawSmartAudioFrame<'_>> for Settings {
                 dbm_levels,
             })
         } else {
+            if !rest.is_empty() {
+                return Err(SmartAudioError::InvalidPayloadLength);
+            }
             None
         };
 
@@ -352,6 +369,93 @@ mod tests {
     use crate::parser::RawSmartAudioFrame;
     use crate::parser::SmartAudioError;
     use std::vec::Vec;
+
+    // These fixtures test typed decoding; stream CRC validation is tested separately.
+    fn response_bytes(command: u8, payload: &[u8]) -> Vec<u8> {
+        let mut bytes = Vec::from([0xAA, 0x55, command, (payload.len() + 1) as u8]);
+        bytes.extend_from_slice(payload);
+        bytes.push(0);
+        bytes
+    }
+
+    fn assert_conversion_command<T: SmartAudioResponse>(
+        frame: &RawSmartAudioFrame<'_>,
+        direct: Result<T, SmartAudioError>,
+        expected_command: bool,
+    ) {
+        let direct = direct.map(|_| ());
+        assert_eq!(direct, T::try_from_raw_frame(frame).map(|_| ()));
+        if expected_command {
+            assert_eq!(direct, Ok(()));
+        } else {
+            assert_eq!(
+                direct,
+                Err(SmartAudioError::UnknownCommand(frame.command()))
+            );
+        }
+    }
+
+    #[test]
+    fn typed_conversions_validate_response_commands() {
+        for command in [0x01, 0x09, 0x11, 0x02, 0x03, 0x04, 0x05, 0xFF] {
+            let payload_len = match command {
+                0x02 | 0x03 | 0x05 => 2,
+                0x04 => 3,
+                0x11 => 8,
+                _ => 5,
+            };
+            let bytes = response_bytes(command, &Vec::from_iter((0..payload_len).map(|_| 0)));
+            let frame = RawSmartAudioFrame::new(&bytes).unwrap();
+            assert_conversion_command(&frame, SetPowerResponse::try_from(&frame), command == 0x02);
+            assert_conversion_command(
+                &frame,
+                SetChannelResponse::try_from(&frame),
+                command == 0x03,
+            );
+            assert_conversion_command(
+                &frame,
+                SetFrequencyResponse::try_from(&frame),
+                command == 0x04,
+            );
+            assert_conversion_command(&frame, SetModeResponse::try_from(&frame), command == 0x05);
+            assert_conversion_command(
+                &frame,
+                Settings::try_from(&frame),
+                matches!(command, 0x01 | 0x09 | 0x11),
+            );
+        }
+    }
+
+    #[test]
+    fn typed_conversions_validate_fixed_payload_lengths() {
+        for (command, expected_len) in [
+            (0x01, 5),
+            (0x09, 5),
+            (0x02, 2),
+            (0x03, 2),
+            (0x04, 3),
+            (0x05, 2),
+        ] {
+            for payload_len in 0..=8 {
+                let payload = Vec::from_iter((0..payload_len).map(|_| 0));
+                let bytes = response_bytes(command, &payload);
+                let frame = RawSmartAudioFrame::new(&bytes).unwrap();
+                let result = match command {
+                    0x01 | 0x09 => Settings::try_from(&frame).map(|_| ()),
+                    0x02 => SetPowerResponse::try_from(&frame).map(|_| ()),
+                    0x03 => SetChannelResponse::try_from(&frame).map(|_| ()),
+                    0x04 => SetFrequencyResponse::try_from(&frame).map(|_| ()),
+                    0x05 => SetModeResponse::try_from(&frame).map(|_| ()),
+                    _ => unreachable!(),
+                };
+                if payload_len == expected_len {
+                    assert_eq!(result, Ok(()));
+                } else {
+                    assert_eq!(result, Err(SmartAudioError::InvalidPayloadLength));
+                }
+            }
+        }
+    }
 
     #[test]
     fn test_get_settings_v1_0_parsing() {
