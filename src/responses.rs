@@ -1,6 +1,6 @@
 use crate::constants::get_settings_flags;
-use crate::constants::mode_flags;
 use crate::constants::response as resp;
+use crate::constants::set_mode_response_flags as mode_flags;
 use crate::SmartAudioParser;
 use crate::{parser::SmartAudioError, RawSmartAudioFrame};
 
@@ -34,7 +34,7 @@ pub trait SmartAudioResponse: Sized {
 }
 
 // Response length includes CRC; settings use five base bytes and two power metadata bytes.
-const MAX_POWER_LEVELS: usize = crate::constants::MAX_PAYLOAD_SIZE - 8;
+const MAX_POWER_LEVELS: usize = crate::constants::MAX_RESPONSE_LENGTH - 8;
 
 /// Detailed power settings, included in `GetSettings` response for SmartAudio V2.1+.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -294,11 +294,11 @@ pub enum Response {
     SetFrequency(SetFrequencyResponse),
     /// Mode setting confirmation (`SetModeCommand` response).
     SetMode(SetModeResponse),
-    /// An unknown or unsupported response.
-    Unknown(u8),
 }
 
 impl Response {
+    /// Decode a validated response frame. Unsupported commands return `UnknownCommand`;
+    /// known commands with malformed payloads return `InvalidPayloadLength`.
     pub fn parse(raw_frame: &RawSmartAudioFrame<'_>) -> Result<Self, SmartAudioError> {
         let cmd = raw_frame.command();
         match cmd {
@@ -311,16 +311,20 @@ impl Response {
                 raw_frame,
             )?)),
             resp::SET_MODE => Ok(Self::SetMode(SetModeResponse::try_from(raw_frame)?)),
-            _ => Err(SmartAudioError::InvalidHeader),
+            _ => Err(SmartAudioError::UnknownCommand(cmd)),
         }
     }
 }
 
 impl SmartAudioParser {
+    /// Alias for [`Self::iter_responses`]. Parsing is lazy; unconsumed bytes are not fed.
     pub fn parse_bytes<'a, 'b>(&'a mut self, buffer: &'b [u8]) -> ResponseIterator<'a, 'b> {
         self.iter_responses(buffer)
     }
 
+    /// Lazily parse a chunk, retaining an incomplete frame for the next chunk.
+    /// Errors are yielded as items; advancing the iterator continues parsing.
+    /// Dropping the iterator leaves its remaining input bytes unconsumed.
     pub fn iter_responses<'a, 'b>(&'a mut self, buffer: &'b [u8]) -> ResponseIterator<'a, 'b> {
         ResponseIterator {
             parser: self,
@@ -354,6 +358,8 @@ impl Iterator for ResponseIterator<'_, '_> {
 }
 
 impl SmartAudioParser {
+    /// Feed one byte and decode a complete response. Errors discard the candidate;
+    /// subsequent bytes can start a new frame without calling `reset`.
     pub fn push_byte(&mut self, byte: u8) -> Result<Option<Response>, SmartAudioError> {
         let Some(raw_packet) = self.push_byte_raw(byte)? else {
             return Ok(None);
@@ -370,11 +376,12 @@ mod tests {
     use crate::parser::SmartAudioError;
     use std::vec::Vec;
 
-    // These fixtures test typed decoding; stream CRC validation is tested separately.
+    // Build structurally valid response frames for typed-decoding tests.
     fn response_bytes(command: u8, payload: &[u8]) -> Vec<u8> {
         let mut bytes = Vec::from([0xAA, 0x55, command, (payload.len() + 1) as u8]);
         bytes.extend_from_slice(payload);
-        bytes.push(0);
+        let crc = crate::framing::crc8_dvb_s2(&bytes[2..]);
+        bytes.push(crc);
         bytes
     }
 
@@ -393,6 +400,48 @@ mod tests {
                 Err(SmartAudioError::UnknownCommand(frame.command()))
             );
         }
+    }
+
+    #[test]
+    fn reports_unknown_and_malformed_responses_then_recovers_across_chunks() {
+        let mut stream = response_bytes(0xFF, &[]);
+        stream.extend(response_bytes(0x03, &[0]));
+        stream.extend(response_bytes(0x03, &[0, 1]));
+
+        for split in 0..=stream.len() {
+            let mut parser = SmartAudioParser::new();
+            let mut results: Vec<_> = parser.iter_responses(&stream[..split]).collect();
+            results.extend(parser.iter_responses(&stream[split..]));
+            assert_eq!(results.len(), 3);
+            assert!(matches!(
+                results[0],
+                Err(SmartAudioError::UnknownCommand(0xFF))
+            ));
+            assert!(matches!(
+                results[1],
+                Err(SmartAudioError::InvalidPayloadLength)
+            ));
+            assert!(matches!(
+                results[2],
+                Ok(Response::SetChannel(SetChannelResponse { channel: 0 }))
+            ));
+        }
+    }
+
+    #[test]
+    fn set_mode_response_reports_running_pitmode() {
+        let bytes = response_bytes(0x05, &[0x04, 1]);
+        let mut parser = SmartAudioParser::new();
+        let response = parser.iter_responses(&bytes).next().unwrap().unwrap();
+        assert!(matches!(
+            response,
+            Response::SetMode(SetModeResponse {
+                pitmode_enabled: true,
+                pitmode_in_range_active: false,
+                pitmode_out_range_active: false,
+                unlocked: false,
+            })
+        ));
     }
 
     #[test]
