@@ -33,22 +33,32 @@ pub trait SmartAudioResponse: Sized {
     fn try_from_raw_frame(raw_frame: &RawSmartAudioFrame<'_>) -> Result<Self, SmartAudioError>;
 }
 
+// Response length includes CRC; settings use five base bytes and two power metadata bytes.
+const MAX_POWER_LEVELS: usize = crate::constants::MAX_PAYLOAD_SIZE - 8;
+
 /// Detailed power settings, included in `GetSettings` response for SmartAudio V2.1+.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct PowerSettings {
     /// The currently selected power in dBm.
     pub current_power: u8,
-    /// The number of available power levels.
-    pub num_power_levels: u8,
-    /// Power level 1 in dBm.
-    pub dbm_level_1: u8,
-    /// Power level 2 in dBm.
-    pub dbm_level_2: u8,
-    /// Power level 3 in dBm.
-    pub dbm_level_3: u8,
-    /// Power level 4 in dBm.
-    pub dbm_level_4: u8,
+    num_power_levels: u8,
+    dbm_levels: [u8; MAX_POWER_LEVELS],
+}
+
+impl PowerSettings {
+    /// The reported number of power levels, excluding the initial pit-mode entry.
+    pub fn num_power_levels(&self) -> u8 {
+        self.num_power_levels
+    }
+
+    /// All reported power levels in dBm, including the initial zero-dBm pit-mode entry.
+    /// The slice contains `num_power_levels() + 1` entries.
+    pub fn dbm_levels(&self) -> &[u8] {
+        self.dbm_levels
+            .get(..usize::from(self.num_power_levels) + 1)
+            .unwrap_or_default()
+    }
 }
 
 /// The VTX settings, returned in response to a `GetSettingsCommand`.
@@ -216,18 +226,22 @@ impl TryFrom<&RawSmartAudioFrame<'_>> for Settings {
         let frequency = u16::from_be_bytes([*f0, *f1]);
 
         let power_settings = if version == Version::V2_1 {
-            let [current_power, num_power_levels, dbm_level_1, dbm_level_2, dbm_level_3, dbm_level_4, ..] =
-                rest
-            else {
+            let [current_power, num_power_levels, levels @ ..] = rest else {
                 return Err(SmartAudioError::InvalidPayloadLength);
             };
+            let expected_levels = usize::from(*num_power_levels) + 1;
+            if levels.len() != expected_levels {
+                return Err(SmartAudioError::InvalidPayloadLength);
+            }
+            let mut dbm_levels = [0; MAX_POWER_LEVELS];
+            dbm_levels
+                .get_mut(..expected_levels)
+                .ok_or(SmartAudioError::InvalidPayloadLength)?
+                .copy_from_slice(levels);
             Some(PowerSettings {
                 current_power: *current_power,
                 num_power_levels: *num_power_levels,
-                dbm_level_1: *dbm_level_1,
-                dbm_level_2: *dbm_level_2,
-                dbm_level_3: *dbm_level_3,
-                dbm_level_4: *dbm_level_4,
+                dbm_levels,
             })
         } else {
             None
@@ -399,13 +413,89 @@ mod tests {
             power_settings: Some(PowerSettings {
                 current_power: 14,
                 num_power_levels: 3,
-                dbm_level_1: 0,
-                dbm_level_2: 14,
-                dbm_level_3: 20,
-                dbm_level_4: 26,
+                dbm_levels: {
+                    let mut levels = [0; MAX_POWER_LEVELS];
+                    levels[..4].copy_from_slice(&[0, 14, 20, 26]);
+                    levels
+                },
             }),
         };
         assert!(matches!(packet, Response::GetSettings(actual) if actual == expected));
+    }
+
+    #[test]
+    fn parses_variable_length_v2_1_power_tables() {
+        let cases: &[(&[u8], u8, &[u8])] = &[
+            (
+                &[0xAA, 0x55, 0x11, 0x09, 0, 0, 0, 0x16, 0xE9, 14, 0, 0, 0x32],
+                0,
+                &[0],
+            ),
+            (
+                &[
+                    0xAA, 0x55, 0x11, 0x0B, 0, 0, 0, 0x16, 0xE9, 14, 2, 0, 14, 20, 0x3F,
+                ],
+                2,
+                &[0, 14, 20],
+            ),
+            (
+                &[
+                    0xAA, 0x55, 0x11, 0x0D, 0, 0, 0, 0x16, 0xE9, 14, 4, 0, 14, 20, 26, 30, 0x64,
+                ],
+                4,
+                &[0, 14, 20, 26, 30],
+            ),
+            (
+                &[
+                    0xAA, 0x55, 0x11, 0x1C, 0, 0, 0, 0x16, 0xE9, 14, 19, 0, 10, 11, 12, 13, 14, 15,
+                    16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 0xCB,
+                ],
+                19,
+                &[
+                    0, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
+                ],
+            ),
+        ];
+
+        for &(raw, expected_count, expected_levels) in cases {
+            let mut parser = SmartAudioParser::new();
+            let mut responses = parser.iter_responses(raw);
+            let Response::GetSettings(settings) = responses.next().unwrap().unwrap() else {
+                panic!("expected settings response");
+            };
+            let power = settings.power_settings.unwrap();
+            assert_eq!(power.current_power, 14);
+            assert_eq!(power.num_power_levels(), expected_count);
+            assert_eq!(power.dbm_levels(), expected_levels);
+            assert!(responses.next().is_none());
+        }
+    }
+
+    #[test]
+    fn rejects_v2_1_power_table_count_mismatches() {
+        // Each frame has a valid CRC, but its table does not match count + 1.
+        let cases: &[&[u8]] = &[
+            &[
+                0xAA, 0x55, 0x11, 0x0B, 0, 0, 0, 0x16, 0xE9, 14, 3, 0, 14, 20, 0x7A,
+            ],
+            &[
+                0xAA, 0x55, 0x11, 0x0B, 0, 0, 0, 0x16, 0xE9, 14, 1, 0, 14, 20, 0xF0,
+            ],
+            &[
+                0xAA, 0x55, 0x11, 0x09, 0, 0, 0, 0x16, 0xE9, 14, 255, 0, 0x4A,
+            ],
+            &[0xAA, 0x55, 0x11, 0x08, 0, 0, 0, 0x16, 0xE9, 14, 0, 0xF6],
+        ];
+
+        for &raw in cases {
+            let mut parser = SmartAudioParser::new();
+            let mut responses = parser.iter_responses(raw);
+            assert!(matches!(
+                responses.next(),
+                Some(Err(SmartAudioError::InvalidPayloadLength))
+            ));
+            assert!(responses.next().is_none());
+        }
     }
 
     #[test]
@@ -546,10 +636,11 @@ mod tests {
             power_settings: Some(PowerSettings {
                 current_power: 14,
                 num_power_levels: 3,
-                dbm_level_1: 0,
-                dbm_level_2: 14,
-                dbm_level_3: 20,
-                dbm_level_4: 26,
+                dbm_levels: {
+                    let mut levels = [0; MAX_POWER_LEVELS];
+                    levels[..4].copy_from_slice(&[0, 14, 20, 26]);
+                    levels
+                },
             }),
         };
         let frame3 = SetPowerResponse { power: 0 };
