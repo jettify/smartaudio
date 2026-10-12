@@ -177,7 +177,7 @@ impl SmartAudioParser {
                 Ok(None)
             }
             State::AwaitingLength
-                if (constants::MIN_PAYLOAD_SIZE..constants::MAX_PAYLOAD_SIZE)
+                if (constants::MIN_PAYLOAD_SIZE..=constants::MAX_PAYLOAD_SIZE)
                     .contains(&(byte as usize)) =>
             {
                 self.position += 1;
