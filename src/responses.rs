@@ -91,8 +91,9 @@ pub struct Settings {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SetPowerResponse {
-    /// The new power. For V1/V2 this is a level index, for V2.1 it's in dBm.
-    power: u8,
+    /// The confirmed power: a DAC value for V1, a level index for V2,
+    /// or a dBm value for V2.1.
+    pub power: u8,
 }
 
 impl SmartAudioResponse for SetPowerResponse {
@@ -106,7 +107,7 @@ impl SmartAudioResponse for SetPowerResponse {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SetChannelResponse {
     /// The new channel index (0-39).
-    channel: u8,
+    pub channel: u8,
 }
 
 impl SmartAudioResponse for SetChannelResponse {
@@ -120,7 +121,7 @@ impl SmartAudioResponse for SetChannelResponse {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SetFrequencyResponse {
     /// The new frequency in MHz.
-    frequency: u16,
+    pub frequency: u16,
 }
 
 impl SmartAudioResponse for SetFrequencyResponse {
