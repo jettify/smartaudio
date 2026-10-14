@@ -158,7 +158,8 @@ impl SmartAudioParser {
         };
 
         match self.state {
-            State::AwaitingHeader1 if byte == constants::HEADER_BYTE_1 => {
+            // A repeated first header byte starts a new candidate without losing sync.
+            State::AwaitingHeader1 | State::AwaitingHeader2 if byte == constants::HEADER_BYTE_1 => {
                 self.position = 0;
                 write_next(self, byte)?;
                 self.state = State::AwaitingHeader2;
@@ -238,6 +239,25 @@ impl Default for SmartAudioParser {
 mod tests {
 
     use super::*;
+
+    #[test]
+    fn parses_valid_frame_after_overlapping_headers() {
+        let valid = [0xAA, 0x55, 0x02, 0x03, 0x00, 0x01, 0x0F];
+
+        for extra_headers in [1, 2, 32] {
+            let mut parser = SmartAudioParser::new();
+            for _ in 0..extra_headers {
+                assert!(matches!(parser.push_byte_raw(0xAA), Ok(None)));
+            }
+            for &byte in valid.iter().take(valid.len() - 1) {
+                assert!(matches!(parser.push_byte_raw(byte), Ok(None)));
+            }
+            let frame = parser.push_byte_raw(0x0F).unwrap().unwrap();
+            assert_eq!(frame.command(), 0x02);
+            assert_eq!(frame.payload(), &[0x00, 0x01]);
+            assert_eq!(frame.len(), valid.len());
+        }
+    }
 
     #[test]
     fn test_parses_valid_frame_after_invalid_crc() {
