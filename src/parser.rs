@@ -26,12 +26,16 @@ pub enum SmartAudioError {
     UnexpectedDataForState(State, u8),
 }
 
+/// Encode a host-to-VTX frame. Payloads longer than 255 bytes are rejected
+/// with `InvalidPayloadLength` before the buffer is modified.
 pub fn frame_payload(
     buffer: &mut [u8],
     command: u8,
     payload: &[u8],
 ) -> Result<usize, SmartAudioError> {
     let payload_size = payload.len();
+    let payload_length =
+        u8::try_from(payload_size).map_err(|_error| SmartAudioError::InvalidPayloadLength)?;
     let frame_len = 2 + 1 + 1 + payload_size + 1;
     if buffer.len() < frame_len {
         return Err(SmartAudioError::BufferTooSmall(buffer.len()));
@@ -47,7 +51,7 @@ pub fn frame_payload(
     *h1 = constants::HEADER_BYTE_1;
     *h2 = constants::HEADER_BYTE_2;
     *cmd = command;
-    *len = payload_size as u8;
+    *len = payload_length;
     body.copy_from_slice(payload);
 
     let crc = crc8_dvb_s2(head);
@@ -239,6 +243,37 @@ impl Default for SmartAudioParser {
 mod tests {
 
     use super::*;
+
+    #[test]
+    fn rejects_payload_lengths_above_u8_without_writing() {
+        let payload = [0x42; 512];
+        for payload_len in [256, 257, 512] {
+            let mut buffer = [0xCC; 517];
+            assert_eq!(
+                frame_payload(&mut buffer, 0x05, &payload[..payload_len]),
+                Err(SmartAudioError::InvalidPayloadLength)
+            );
+            assert_eq!(buffer, [0xCC; 517]);
+        }
+
+        let mut small_buffer = [0xCC; 4];
+        assert_eq!(
+            frame_payload(&mut small_buffer, 0x05, &payload),
+            Err(SmartAudioError::InvalidPayloadLength)
+        );
+        assert_eq!(small_buffer, [0xCC; 4]);
+    }
+
+    #[test]
+    fn encodes_maximum_u8_payload_length() {
+        let payload = [0x42; 255];
+        let mut buffer = [0xCC; 261];
+        assert_eq!(frame_payload(&mut buffer, 0x05, &payload), Ok(260));
+        assert_eq!(&buffer[..4], &[0xAA, 0x55, 0x05, 0xFF]);
+        assert_eq!(&buffer[4..259], &payload);
+        assert_eq!(buffer[259], 0xDE);
+        assert_eq!(buffer[260], 0xCC);
+    }
 
     #[test]
     fn parses_valid_frame_after_overlapping_headers() {
