@@ -1,65 +1,23 @@
 use crate::constants;
 
-fn crc8_dvb_s2(data: &[u8]) -> u8 {
-    let mut crc = 0;
-    for byte in data {
-        crc ^= byte;
-        for _ in 0..8 {
-            if crc & 0x80 != 0 {
-                crc = (crc << 1) ^ 0xD5;
-            } else {
-                crc <<= 1;
-            }
-        }
-    }
-    crc
-}
+// Preserve the original public paths.
+pub use crate::framing::{frame_payload, RawSmartAudioFrame};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SmartAudioError {
+    /// The output buffer is too small; contains the required byte count.
     BufferTooSmall(usize),
+    /// A response's CRC does not match command, length, and payload.
     InvalidCrc { calculated_crc: u8, frame_crc: u8 },
+    /// A complete frame does not start with `0xAA 0x55`.
     InvalidHeader,
+    /// An unsupported command, or one that does not match the requested response type.
     UnknownCommand(u8),
+    /// Invalid wire length, command-specific payload shape, or encoder payload over 255 bytes.
     InvalidPayloadLength,
+    /// A byte cannot continue the current header state; the candidate was discarded.
     UnexpectedDataForState(State, u8),
-}
-
-/// Encode a host-to-VTX frame. Payloads longer than 255 bytes are rejected
-/// with `InvalidPayloadLength` before the buffer is modified.
-pub fn frame_payload(
-    buffer: &mut [u8],
-    command: u8,
-    payload: &[u8],
-) -> Result<usize, SmartAudioError> {
-    let payload_size = payload.len();
-    let payload_length =
-        u8::try_from(payload_size).map_err(|_error| SmartAudioError::InvalidPayloadLength)?;
-    let frame_len = 2 + 1 + 1 + payload_size + 1;
-    if buffer.len() < frame_len {
-        return Err(SmartAudioError::BufferTooSmall(buffer.len()));
-    }
-    let frame = buffer
-        .get_mut(..frame_len)
-        .ok_or(SmartAudioError::BufferTooSmall(frame_len))?;
-    let (head, crc_slot) = frame.split_at_mut(frame_len - 1);
-    let (header, body) = head.split_at_mut(4);
-    let [h1, h2, cmd, len] = header else {
-        return Err(SmartAudioError::InvalidPayloadLength);
-    };
-    *h1 = constants::HEADER_BYTE_1;
-    *h2 = constants::HEADER_BYTE_2;
-    *cmd = command;
-    *len = payload_length;
-    body.copy_from_slice(payload);
-
-    let crc = crc8_dvb_s2(head);
-    let [crc_byte] = crc_slot else {
-        return Err(SmartAudioError::InvalidPayloadLength);
-    };
-    *crc_byte = crc;
-    Ok(frame_len)
 }
 
 #[derive(Debug, Default, Eq, PartialEq, Copy, Clone)]
@@ -73,60 +31,12 @@ pub enum State {
     Reading(usize),
 }
 
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct RawSmartAudioFrame<'a> {
-    bytes: &'a [u8],
-    command: u8,
-    payload: &'a [u8],
-    crc: u8,
-}
-
-impl<'a> RawSmartAudioFrame<'a> {
-    pub(crate) fn new(bytes: &'a [u8]) -> Result<Self, SmartAudioError> {
-        let Some((&command, tail)) = bytes.get(2).zip(bytes.get(3..)) else {
-            return Err(SmartAudioError::InvalidPayloadLength);
-        };
-        let Some((&crc, without_crc)) = bytes.last().zip(bytes.get(4..bytes.len() - 1)) else {
-            return Err(SmartAudioError::InvalidPayloadLength);
-        };
-        let payload_size = tail
-            .first()
-            .copied()
-            .ok_or(SmartAudioError::InvalidPayloadLength)? as usize;
-        if payload_size == 0 || without_crc.len() + 1 != payload_size {
-            return Err(SmartAudioError::InvalidPayloadLength);
-        }
-        Ok(Self {
-            bytes,
-            command,
-            payload: without_crc,
-            crc,
-        })
-    }
-
-    pub fn command(&self) -> u8 {
-        self.command
-    }
-
-    pub fn payload(&self) -> &[u8] {
-        self.payload
-    }
-
-    pub fn len(&self) -> usize {
-        self.bytes.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.bytes.is_empty()
-    }
-
-    /// Returns the CRC check byte of the frame.
-    pub fn crc(&self) -> u8 {
-        self.crc
-    }
-}
-
+/// Incremental VTX-to-host response parser with a fixed 32-byte buffer.
+///
+/// Partial frames persist across byte calls and input chunks. Every reported
+/// error discards the current candidate; keep feeding bytes to find the next
+/// frame. The parser does not track time: call [`Self::reset`] after a timeout
+/// or transport interruption to discard a partial frame.
 #[derive(Debug)]
 pub struct SmartAudioParser {
     buffer: [u8; constants::MAX_FRAME_SIZE],
@@ -143,20 +53,25 @@ impl SmartAudioParser {
         }
     }
 
+    /// Discard a partial frame and resume looking for a header.
     pub fn reset(&mut self) {
         self.position = 0;
         self.state = State::AwaitingHeader1;
     }
 
+    /// Feed one response byte, returning a frame only after header, length, and CRC validation.
+    /// Non-header bytes while seeking sync are reported as `UnexpectedDataForState`.
+    /// Repeated `0xAA` bytes preserve the candidate header. A returned frame borrows
+    /// this parser, so consume it before feeding more bytes.
     pub fn push_byte_raw(
         &mut self,
         byte: u8,
     ) -> Result<Option<RawSmartAudioFrame<'_>>, SmartAudioError> {
         let write_next = |this: &mut Self, value: u8| -> Result<(), SmartAudioError> {
-            let slot = this
-                .buffer
-                .get_mut(this.position)
-                .ok_or(SmartAudioError::InvalidPayloadLength)?;
+            let Some(slot) = this.buffer.get_mut(this.position) else {
+                this.reset();
+                return Err(SmartAudioError::InvalidPayloadLength);
+            };
             *slot = value;
             Ok(())
         };
@@ -182,7 +97,7 @@ impl SmartAudioParser {
                 Ok(None)
             }
             State::AwaitingLength
-                if (constants::MIN_PAYLOAD_SIZE..=constants::MAX_PAYLOAD_SIZE)
+                if (constants::MIN_RESPONSE_LENGTH..=constants::MAX_RESPONSE_LENGTH)
                     .contains(&(byte as usize)) =>
             {
                 self.position += 1;
@@ -190,30 +105,17 @@ impl SmartAudioParser {
                 self.state = State::Reading(byte as usize);
                 Ok(None)
             }
+            State::AwaitingLength => {
+                self.reset();
+                Err(SmartAudioError::InvalidPayloadLength)
+            }
             State::Reading(n) => {
                 self.position += 1;
                 write_next(self, byte)?;
-                if self.position == n + 3 {
+                if self.position + 1 == n + constants::RESPONSE_PREFIX_SIZE {
                     let start = 0;
                     let end = self.position + 1;
 
-                    let crc_data = self
-                        .buffer
-                        .get(2..end - 1)
-                        .ok_or(SmartAudioError::InvalidPayloadLength)?;
-                    let calculated_crc = crc8_dvb_s2(crc_data);
-
-                    let frame_crc = *self
-                        .buffer
-                        .get(self.position)
-                        .ok_or(SmartAudioError::InvalidPayloadLength)?;
-                    if frame_crc != calculated_crc {
-                        self.reset();
-                        return Err(SmartAudioError::InvalidCrc {
-                            frame_crc,
-                            calculated_crc,
-                        });
-                    }
                     self.reset();
                     let bytes = self
                         .buffer
@@ -245,34 +147,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rejects_payload_lengths_above_u8_without_writing() {
-        let payload = [0x42; 512];
-        for payload_len in [256, 257, 512] {
-            let mut buffer = [0xCC; 517];
+    fn recovers_after_invalid_response_lengths() {
+        for length in [0, 29, 255] {
+            let mut parser = SmartAudioParser::new();
+            for byte in [0xAA, 0x55, 0x02] {
+                assert!(matches!(parser.push_byte_raw(byte), Ok(None)));
+            }
             assert_eq!(
-                frame_payload(&mut buffer, 0x05, &payload[..payload_len]),
-                Err(SmartAudioError::InvalidPayloadLength)
+                parser.push_byte_raw(length).unwrap_err(),
+                SmartAudioError::InvalidPayloadLength
             );
-            assert_eq!(buffer, [0xCC; 517]);
+            for byte in [0xAA, 0x55, 0x02, 0x03, 0, 1] {
+                assert!(matches!(parser.push_byte_raw(byte), Ok(None)));
+            }
+            assert_eq!(parser.push_byte_raw(0x0F).unwrap().unwrap().command(), 0x02);
         }
-
-        let mut small_buffer = [0xCC; 4];
-        assert_eq!(
-            frame_payload(&mut small_buffer, 0x05, &payload),
-            Err(SmartAudioError::InvalidPayloadLength)
-        );
-        assert_eq!(small_buffer, [0xCC; 4]);
-    }
-
-    #[test]
-    fn encodes_maximum_u8_payload_length() {
-        let payload = [0x42; 255];
-        let mut buffer = [0xCC; 261];
-        assert_eq!(frame_payload(&mut buffer, 0x05, &payload), Ok(260));
-        assert_eq!(&buffer[..4], &[0xAA, 0x55, 0x05, 0xFF]);
-        assert_eq!(&buffer[4..259], &payload);
-        assert_eq!(buffer[259], 0xDE);
-        assert_eq!(buffer[260], 0xCC);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use crate::constants::command;
-use crate::constants::mode_flags;
-use crate::parser::frame_payload;
+use crate::constants::set_mode_flags;
+use crate::framing::frame_payload;
 use crate::parser::SmartAudioError;
 
 pub trait SmartAudioCommand {
@@ -106,19 +106,19 @@ pub struct SetModeCommand {
     /// Reduces output power to a minimum and sets the frequency to 5584 MHz.
     /// Not supported in SmartAudio V2.1 or newer (will default to in-range pit mode).
     pub pitmode_out_range_active: bool,
-    /// If `true`, this *deactivates* pit mode. This is counter-intuitive.
-    /// The flag in the payload (`0x04`) is for "Quit PIT MODE".
-    pub pitmode_enabled: bool,
+    /// Deactivate pit mode immediately by setting the "Quit PIT MODE" bit (`0x04`).
+    /// The in-range and out-of-range configuration flags can be sent alongside it.
+    pub quit_pitmode: bool,
     /// Unlock the VTX.
     pub unlocked: bool,
 }
 
 impl SmartAudioCommand for SetModeCommand {
     fn to_bytes(&self, buffer: &mut [u8]) -> Result<usize, SmartAudioError> {
-        let mode = (u8::from(self.pitmode_in_range_active) * mode_flags::PITMODE_IN_RANGE)
-            | (u8::from(self.pitmode_out_range_active) * mode_flags::PITMODE_OUT_RANGE)
-            | (u8::from(self.pitmode_enabled) * mode_flags::PITMODE_ENABLED)
-            | (u8::from(self.unlocked) * mode_flags::UNLOCKED);
+        let mode = (u8::from(self.pitmode_in_range_active) * set_mode_flags::PITMODE_IN_RANGE)
+            | (u8::from(self.pitmode_out_range_active) * set_mode_flags::PITMODE_OUT_RANGE)
+            | (u8::from(self.quit_pitmode) * set_mode_flags::QUIT_PITMODE)
+            | (u8::from(self.unlocked) * set_mode_flags::UNLOCKED);
         let payload = [mode];
         frame_payload(buffer, command::SET_MODE, &payload)
     }
@@ -177,12 +177,33 @@ mod tests {
     }
 
     #[test]
+    fn encodes_quit_pitmode_with_configuration_flags() {
+        for (in_range, out_range, mode, crc) in [
+            (false, false, 0x04, 0xD3),
+            (true, false, 0x05, 0x06),
+            (false, true, 0x06, 0xAC),
+        ] {
+            let command = SetModeCommand {
+                pitmode_in_range_active: in_range,
+                pitmode_out_range_active: out_range,
+                quit_pitmode: true,
+                unlocked: false,
+            };
+            let mut buffer = [0; 6];
+            assert_eq!(
+                command.to_frame(&mut buffer).unwrap(),
+                &[0xAA, 0x55, 0x0B, 1, mode, crc]
+            );
+        }
+    }
+
+    #[test]
     fn test_set_mode_command() {
         // Master: 0xAA 0x55 0x0B(Command 5) 0x01(Length) 0x0A(Mode) 0x7B(CRC8)
         let frame = SetModeCommand {
             pitmode_in_range_active: false,
             pitmode_out_range_active: true,
-            pitmode_enabled: false,
+            quit_pitmode: false,
             unlocked: true,
         };
         let mut buffer: [u8; 6] = [0; 6];

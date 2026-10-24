@@ -6,6 +6,7 @@
 #![doc = include_str!("../README.md")]
 pub mod commands;
 pub(crate) mod constants;
+pub mod framing;
 pub mod parser;
 pub mod responses;
 
