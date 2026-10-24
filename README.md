@@ -39,7 +39,7 @@ fn main() {
         0xAA, 0x55, 0x05, 0x03, 0x0A, 0x01, 0x4F, // frame7
     ];
 
-    println!("Parssing frame from buffer using iterator:");
+    println!("Parsing responses using iterator:");
 
     let mut parser = SmartAudioParser::new();
     for frame in parser.iter_responses(&raw[..]) {

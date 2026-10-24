@@ -66,8 +66,9 @@ pub fn frame_payload(
 ///
 /// Header, length, and CRC are checked before construction. The payload excludes
 /// CRC but includes a reserved byte for setter responses. Use typed conversions
-/// to validate the command-specific payload shape.
-#[derive(Debug, Clone)]
+/// to validate the command-specific payload shape. Use [`Self::try_from`] to
+/// validate a standalone response slice containing exactly one frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RawSmartAudioFrame<'a> {
     bytes: &'a [u8],
@@ -76,8 +77,13 @@ pub struct RawSmartAudioFrame<'a> {
     crc: u8,
 }
 
-impl<'a> RawSmartAudioFrame<'a> {
-    pub(crate) fn new(bytes: &'a [u8]) -> Result<Self, SmartAudioError> {
+impl<'a> TryFrom<&'a [u8]> for RawSmartAudioFrame<'a> {
+    type Error = SmartAudioError;
+
+    /// Validate exactly one complete VTX-to-host response without copying it.
+    /// Checks header, length, and CRC; command-specific payload checks are left
+    /// to typed response conversions. Trailing bytes are rejected.
+    fn try_from(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         let [h1, h2, command, length, tail @ ..] = bytes else {
             return Err(SmartAudioError::InvalidPayloadLength);
         };
@@ -111,7 +117,9 @@ impl<'a> RawSmartAudioFrame<'a> {
             crc,
         })
     }
+}
 
+impl RawSmartAudioFrame<'_> {
     pub fn command(&self) -> u8 {
         self.command
     }
@@ -141,44 +149,44 @@ mod tests {
     #[test]
     fn validates_response_framing_before_construction() {
         let valid = [0xAA, 0x55, 0x02, 0x03, 0, 1, 0x0F];
-        let frame = RawSmartAudioFrame::new(&valid).unwrap();
+        let frame = RawSmartAudioFrame::try_from(valid.as_slice()).unwrap();
         assert_eq!(frame.command(), 0x02);
         assert_eq!(frame.payload(), &[0, 1]);
         assert_eq!(frame.crc(), 0x0F);
 
         for end in 0..valid.len() {
             assert_eq!(
-                RawSmartAudioFrame::new(&valid[..end]).unwrap_err(),
-                SmartAudioError::InvalidPayloadLength
+                RawSmartAudioFrame::try_from(&valid[..end]),
+                Err(SmartAudioError::InvalidPayloadLength)
             );
         }
         let mut invalid = valid;
         invalid[0] = 0;
         assert_eq!(
-            RawSmartAudioFrame::new(&invalid).unwrap_err(),
-            SmartAudioError::InvalidHeader
+            RawSmartAudioFrame::try_from(invalid.as_slice()),
+            Err(SmartAudioError::InvalidHeader)
         );
         for length in [0, 2, 4, 29] {
             let mut invalid = valid;
             invalid[3] = length;
             assert_eq!(
-                RawSmartAudioFrame::new(&invalid).unwrap_err(),
-                SmartAudioError::InvalidPayloadLength
+                RawSmartAudioFrame::try_from(invalid.as_slice()),
+                Err(SmartAudioError::InvalidPayloadLength)
             );
         }
         let mut invalid = valid;
         invalid[6] = 0x0E;
         assert_eq!(
-            RawSmartAudioFrame::new(&invalid).unwrap_err(),
-            SmartAudioError::InvalidCrc {
+            RawSmartAudioFrame::try_from(invalid.as_slice()),
+            Err(SmartAudioError::InvalidCrc {
                 calculated_crc: 0x0F,
                 frame_crc: 0x0E,
-            }
+            })
         );
         let extra_byte = [0xAA, 0x55, 0x02, 0x03, 0, 1, 0x0F, 0];
         assert_eq!(
-            RawSmartAudioFrame::new(&extra_byte).unwrap_err(),
-            SmartAudioError::InvalidPayloadLength
+            RawSmartAudioFrame::try_from(extra_byte.as_slice()),
+            Err(SmartAudioError::InvalidPayloadLength)
         );
     }
 
