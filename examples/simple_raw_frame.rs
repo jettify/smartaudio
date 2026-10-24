@@ -13,13 +13,15 @@ fn main() {
         0x16, 0xE9, // Current Frequency 5865
         0x0A, // CRC8
     ];
-    println!("Parssing packet:");
-    for b in &raw_settings_v20[0..raw_settings_v20.len()] {
-        let reult = parser.push_byte_raw(*b);
-        match reult {
-            Ok(Some(f)) => println!("{:#?}", f),
-            Err(e) => eprintln!("Error parsing packet: {:?}", e),
-            _ => (),
+    // A transport may return chunks ending anywhere within a frame.
+    for chunk in raw_settings_v20.chunks(4) {
+        let mut input = chunk;
+        loop {
+            match parser.next_frame(&mut input) {
+                Ok(Some(frame)) => println!("{:#?}", frame),
+                Ok(None) => break,
+                Err(error) => eprintln!("Error parsing packet: {:?}", error),
+            }
         }
     }
 }

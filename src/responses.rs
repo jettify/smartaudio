@@ -318,53 +318,35 @@ impl Response {
 
 impl SmartAudioParser {
     /// Alias for [`Self::iter_responses`]. Parsing is lazy; unconsumed bytes are not fed.
-    pub fn parse_bytes<'a, 'b>(&'a mut self, buffer: &'b [u8]) -> ResponseIterator<'a, 'b> {
-        self.iter_responses(buffer)
+    pub fn parse_bytes<'a, 'b>(&'a mut self, input: &'b [u8]) -> ResponseIterator<'a, 'b> {
+        self.iter_responses(input)
     }
 
     /// Lazily parse a chunk, retaining an incomplete frame for the next chunk.
     /// Errors are yielded as items; advancing the iterator continues parsing.
     /// Dropping the iterator leaves its remaining input bytes unconsumed.
-    pub fn iter_responses<'a, 'b>(&'a mut self, buffer: &'b [u8]) -> ResponseIterator<'a, 'b> {
+    pub fn iter_responses<'a, 'b>(&'a mut self, input: &'b [u8]) -> ResponseIterator<'a, 'b> {
         ResponseIterator {
             parser: self,
-            buffer,
-            position: 0,
+            input,
         }
     }
 }
 
 pub struct ResponseIterator<'a, 'b> {
     parser: &'a mut SmartAudioParser,
-    buffer: &'b [u8],
-    position: usize,
+    input: &'b [u8],
 }
 
 impl Iterator for ResponseIterator<'_, '_> {
     type Item = Result<Response, SmartAudioError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(byte) = self.buffer.get(self.position).copied() {
-            self.position += 1;
-
-            match self.parser.push_byte(byte) {
-                Ok(Some(response)) => return Some(Ok(response)),
-                Ok(None) => (),
-                Err(e) => return Some(Err(e)),
-            }
+        match self.parser.next_frame(&mut self.input) {
+            Ok(Some(frame)) => Some(Response::parse(&frame)),
+            Ok(None) => None,
+            Err(error) => Some(Err(error)),
         }
-        None
-    }
-}
-
-impl SmartAudioParser {
-    /// Feed one byte and decode a complete response. Errors discard the candidate;
-    /// subsequent bytes can start a new frame without calling `reset`.
-    pub fn push_byte(&mut self, byte: u8) -> Result<Option<Response>, SmartAudioError> {
-        let Some(raw_packet) = self.push_byte_raw(byte)? else {
-            return Ok(None);
-        };
-        Response::parse(&raw_packet).map(Some)
     }
 }
 
@@ -400,6 +382,25 @@ mod tests {
                 Err(SmartAudioError::UnknownCommand(frame.command()))
             );
         }
+    }
+
+    #[test]
+    fn dropping_iterator_does_not_consume_remaining_input() {
+        let valid = response_bytes(0x03, &[0, 1]);
+        let mut chunk = valid.clone();
+        chunk.extend_from_slice(&[0xAA, 0x55]);
+        let mut parser = SmartAudioParser::new();
+        assert!(parser.iter_responses(&chunk).next().unwrap().is_ok());
+        // The unconsumed trailing header must not become a buffered partial frame.
+        assert!(parser.iter_responses(&valid).next().unwrap().is_ok());
+
+        // Exhausting the iterator does retain the trailing header.
+        assert_eq!(parser.iter_responses(&chunk).count(), 1);
+        assert!(parser
+            .iter_responses(valid.get(2..).unwrap())
+            .next()
+            .unwrap()
+            .is_ok());
     }
 
     #[test]
@@ -701,15 +702,13 @@ mod tests {
     }
 
     #[test]
-    fn test_push_byte_get_settings() {
+    fn parses_settings_across_chunks() {
         let raw: [u8; 10] = [0xAA, 0x55, 0x09, 0x06, 0x01, 0x00, 0x1A, 0x16, 0xE9, 0x0A];
         let mut parser = SmartAudioParser::default();
 
-        for byte in raw.iter().take(raw.len() - 1) {
-            assert!(matches!(parser.push_byte(*byte), Ok(None)));
-        }
-
-        let result = parser.push_byte(raw[raw.len() - 1]);
+        let (prefix, suffix) = raw.split_at(raw.len() - 1);
+        assert!(parser.iter_responses(prefix).next().is_none());
+        let result = parser.iter_responses(suffix).next().unwrap();
         let expected = Settings {
             version: Version::V2_0,
             channel: 1,
@@ -722,20 +721,18 @@ mod tests {
             pitmode_out_range_active: true,
             power_settings: None,
         };
-        assert!(matches!(result, Ok(Some(Response::GetSettings(actual))) if actual == expected));
+        assert!(matches!(result, Ok(Response::GetSettings(actual)) if actual == expected));
     }
 
     #[test]
-    fn test_push_byte_invalid_crc() {
+    fn reports_invalid_crc_across_chunks() {
         // Same as test_get_settings_v2_0_parsing, but with last byte (CRC) modified
         let raw: [u8; 10] = [0xAA, 0x55, 0x09, 0x06, 0x01, 0x00, 0x1A, 0x16, 0xE9, 0x0B]; // 0x0A is correct CRC
         let mut parser = SmartAudioParser::default();
 
-        for byte in raw.iter().take(raw.len() - 1) {
-            assert!(matches!(parser.push_byte(*byte), Ok(None)));
-        }
-
-        let result = parser.push_byte(raw[raw.len() - 1]);
+        let (prefix, suffix) = raw.split_at(raw.len() - 1);
+        assert!(parser.iter_responses(prefix).next().is_none());
+        let result = parser.iter_responses(suffix).next().unwrap();
         assert!(matches!(result, Err(SmartAudioError::InvalidCrc { .. })));
     }
 

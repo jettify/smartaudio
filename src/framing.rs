@@ -62,7 +62,7 @@ pub fn frame_payload(
     Ok(frame_len)
 }
 
-/// A validated VTX-to-host response frame borrowed from the parser's buffer.
+/// A validated VTX-to-host response frame borrowed from input or parser storage.
 ///
 /// Header, length, and CRC are checked before construction. The payload excludes
 /// CRC but includes a reserved byte for setter responses. Use typed conversions

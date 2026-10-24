@@ -48,10 +48,16 @@ fn main() {
 }
 ```
 
-Here is a basic example feeding data stream one byte at time:
+Complete frames are parsed directly from the input slice. Frames split across
+chunks use an internal 32-byte partial-frame buffer. The parser retains no input references
+between calls, so transport buffers can be reused after their frames are consumed.
+Typed responses remain owned, including the V2.1 power table.
+
+For raw frames, use `next_frame` with a mutable slice cursor. It advances the cursor
+on both frames and errors. `Ok(None)` means the chunk is exhausted; any partial
+frame remains buffered. Consume each returned frame before calling again.
 
 ```rust
-use smartaudio::Response;
 use smartaudio::SmartAudioParser;
 
 fn main() {
@@ -67,25 +73,25 @@ fn main() {
         0x16, 0xE9, // Current Frequency 5865
         0x0A, // CRC8
     ];
-    println!("Parssing raw packet:");
-    for b in &raw_settings_v20[0..raw_settings_v20.len()] {
-        let reult = parser.push_byte(*b);
-        match reult {
-            Ok(Some(Response::GetSettings(settings))) => {
-                println!("{:#?}", settings);
-                println!("\n");
-                println!("Version:     {:?}", settings.version);
-                println!("Channel:     {:?}", settings.channel);
-                println!("Power Level: {:?}", settings.power_level);
-                println!("Unlocked:    {:?}", settings.unlocked);
+    // A transport may return chunks ending anywhere within a frame.
+    for chunk in raw_settings_v20.chunks(4) {
+        let mut input = chunk;
+        loop {
+            match parser.next_frame(&mut input) {
+                Ok(Some(frame)) => println!("{:#?}", frame),
+                Ok(None) => break,
+                Err(error) => eprintln!("Error parsing packet: {:?}", error),
             }
-            Err(e) => eprintln!("Error parsing packet: {:?}", e),
-            _ => (),
         }
     }
 }
-
 ```
+
+Call `reset()` after a timeout or transport interruption to discard a partial
+frame. The slice APIs replace `push_byte` and `push_byte_raw`; for a single byte,
+pass `core::slice::from_ref(&byte)` as the chunk. When using `iter_responses`,
+exhaust the iterator to retain a trailing partial frame; dropping it early leaves
+its remaining bytes unconsumed.
 
 ## Installation
 

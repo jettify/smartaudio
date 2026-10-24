@@ -33,105 +33,180 @@ pub enum State {
 
 /// Incremental VTX-to-host response parser with a fixed 32-byte buffer.
 ///
-/// Partial frames persist across byte calls and input chunks. Every reported
-/// error discards the current candidate; keep feeding bytes to find the next
-/// frame. The parser does not track time: call [`Self::reset`] after a timeout
-/// or transport interruption to discard a partial frame.
+/// Complete frames borrow the input directly. Only candidates spanning chunks
+/// are copied into buffer storage. Errors discard the current candidate; continue
+/// with the remaining input to seek the next frame. Call [`Self::reset`] after a
+/// timeout or transport interruption to discard an incomplete frame.
 #[derive(Debug)]
 pub struct SmartAudioParser {
     buffer: [u8; constants::MAX_FRAME_SIZE],
-    state: State,
-    position: usize,
+    buffered_len: usize,
 }
 
 impl SmartAudioParser {
     pub fn new() -> Self {
         Self {
             buffer: [0; constants::MAX_FRAME_SIZE],
-            state: State::AwaitingHeader1,
-            position: 0,
+            buffered_len: 0,
         }
     }
 
     /// Discard a partial frame and resume looking for a header.
     pub fn reset(&mut self) {
-        self.position = 0;
-        self.state = State::AwaitingHeader1;
+        self.buffered_len = 0;
     }
 
-    /// Feed one response byte, returning a frame only after header, length, and CRC validation.
-    /// Non-header bytes while seeking sync are reported as `UnexpectedDataForState`.
-    /// Repeated `0xAA` bytes preserve the candidate header. A returned frame borrows
-    /// this parser, so consume it before feeding more bytes.
-    pub fn push_byte_raw(
-        &mut self,
-        byte: u8,
-    ) -> Result<Option<RawSmartAudioFrame<'_>>, SmartAudioError> {
-        let write_next = |this: &mut Self, value: u8| -> Result<(), SmartAudioError> {
-            let Some(slot) = this.buffer.get_mut(this.position) else {
-                this.reset();
-                return Err(SmartAudioError::InvalidPayloadLength);
+    /// Consume input through the next validated response frame or error.
+    ///
+    /// Advances `input` on success and error. `Ok(None)` means the input is
+    /// exhausted; an incomplete candidate is retained for the next chunk.
+    /// Non-header bytes yield `UnexpectedDataForState`; repeated `0xAA` bytes
+    /// preserve sync. Invalid lengths consume the four-byte prefix, and invalid
+    /// CRCs consume the entire candidate, without rescanning its contents.
+    ///
+    /// A frame borrows either the input or this parser's buffer. Consume
+    /// it before calling this method again. No input reference is retained in
+    /// the parser between calls, so exhausted transport buffers can be reused.
+    pub fn next_frame<'a, 'input: 'a>(
+        &'a mut self,
+        input: &mut &'input [u8],
+    ) -> Result<Option<RawSmartAudioFrame<'a>>, SmartAudioError> {
+        // A fresh first header byte supersedes a lone header from an earlier
+        // chunk. Let the direct path borrow the new candidate from this input.
+        if self.buffered_len == 1 && input.first() == Some(&constants::HEADER_BYTE_1) {
+            self.reset();
+        }
+        if self.buffered_len > 0 {
+            self.complete_buffered_frame(input)
+        } else {
+            self.parse_input(input)
+        }
+    }
+
+    fn complete_buffered_frame<'a>(
+        &'a mut self,
+        input: &mut &[u8],
+    ) -> Result<Option<RawSmartAudioFrame<'a>>, SmartAudioError> {
+        if self.buffered_len == 1 {
+            let Some((&byte, rest)) = input.split_first() else {
+                return Ok(None);
             };
-            *slot = value;
-            Ok(())
-        };
-
-        match self.state {
-            // A repeated first header byte starts a new candidate without losing sync.
-            State::AwaitingHeader1 | State::AwaitingHeader2 if byte == constants::HEADER_BYTE_1 => {
-                self.position = 0;
-                write_next(self, byte)?;
-                self.state = State::AwaitingHeader2;
-                Ok(None)
-            }
-            State::AwaitingHeader2 if byte == constants::HEADER_BYTE_2 => {
-                self.position += 1;
-                write_next(self, byte)?;
-                self.state = State::AwaitingCommand;
-                Ok(None)
-            }
-            State::AwaitingCommand => {
-                self.position += 1;
-                write_next(self, byte)?;
-                self.state = State::AwaitingLength;
-                Ok(None)
-            }
-            State::AwaitingLength
-                if (constants::MIN_RESPONSE_LENGTH..=constants::MAX_RESPONSE_LENGTH)
-                    .contains(&(byte as usize)) =>
-            {
-                self.position += 1;
-                write_next(self, byte)?;
-                self.state = State::Reading(byte as usize);
-                Ok(None)
-            }
-            State::AwaitingLength => {
+            if byte != constants::HEADER_BYTE_2 {
+                *input = rest;
                 self.reset();
-                Err(SmartAudioError::InvalidPayloadLength)
+                return Err(SmartAudioError::UnexpectedDataForState(
+                    State::AwaitingHeader2,
+                    byte,
+                ));
             }
-            State::Reading(n) => {
-                self.position += 1;
-                write_next(self, byte)?;
-                if self.position + 1 == n + constants::RESPONSE_PREFIX_SIZE {
-                    let start = 0;
-                    let end = self.position + 1;
-
-                    self.reset();
-                    let bytes = self
-                        .buffer
-                        .get(start..end)
-                        .ok_or(SmartAudioError::InvalidPayloadLength)?;
-                    Ok(Some(RawSmartAudioFrame::new(bytes)?))
-                } else {
-                    Ok(None)
-                }
-            }
-            _ => {
-                let current_state = self.state;
-                self.reset();
-                Err(SmartAudioError::UnexpectedDataForState(current_state, byte))
+            self.fill_buffer_to(input, 2)?;
+        }
+        if self.buffered_len < constants::RESPONSE_PREFIX_SIZE {
+            self.fill_buffer_to(input, constants::RESPONSE_PREFIX_SIZE)?;
+            if self.buffered_len < constants::RESPONSE_PREFIX_SIZE {
+                return Ok(None);
             }
         }
+        let expected_frame_len = match Self::expected_frame_len(&self.buffer) {
+            Ok(length) => length,
+            Err(error) => {
+                self.reset();
+                return Err(error);
+            }
+        };
+        self.fill_buffer_to(input, expected_frame_len)?;
+        if self.buffered_len < expected_frame_len {
+            return Ok(None);
+        }
+        // Reset metadata before lending the completed bytes; leave storage intact.
+        self.reset();
+        let bytes = self
+            .buffer
+            .get(..expected_frame_len)
+            .ok_or(SmartAudioError::InvalidPayloadLength)?;
+        RawSmartAudioFrame::new(bytes).map(Some)
+    }
+
+    fn parse_input<'a, 'input: 'a>(
+        &'a mut self,
+        input: &mut &'input [u8],
+    ) -> Result<Option<RawSmartAudioFrame<'a>>, SmartAudioError> {
+        use constants::{HEADER_BYTE_1, HEADER_BYTE_2};
+
+        loop {
+            match *input {
+                [HEADER_BYTE_1, HEADER_BYTE_1, ..] => {
+                    *input = input.split_at(1).1;
+                }
+                [HEADER_BYTE_1, HEADER_BYTE_2, ..] => break,
+                [HEADER_BYTE_1] => {
+                    self.fill_buffer_to(input, constants::RESPONSE_PREFIX_SIZE)?;
+                    return Ok(None);
+                }
+                [HEADER_BYTE_1, invalid, rest @ ..] => {
+                    *input = rest;
+                    return Err(SmartAudioError::UnexpectedDataForState(
+                        State::AwaitingHeader2,
+                        *invalid,
+                    ));
+                }
+                [invalid, rest @ ..] => {
+                    *input = rest;
+                    return Err(SmartAudioError::UnexpectedDataForState(
+                        State::AwaitingHeader1,
+                        *invalid,
+                    ));
+                }
+                [] => return Ok(None),
+            }
+        }
+
+        if input.len() < constants::RESPONSE_PREFIX_SIZE {
+            self.fill_buffer_to(input, constants::RESPONSE_PREFIX_SIZE)?;
+            return Ok(None);
+        }
+        let expected_frame_len = match Self::expected_frame_len(input) {
+            Ok(length) => length,
+            Err(error) => {
+                *input = input.split_at(constants::RESPONSE_PREFIX_SIZE).1;
+                return Err(error);
+            }
+        };
+        if input.len() < expected_frame_len {
+            self.fill_buffer_to(input, expected_frame_len)?;
+            return Ok(None);
+        }
+        let (bytes, rest) = input.split_at(expected_frame_len);
+        *input = rest;
+        RawSmartAudioFrame::new(bytes).map(Some)
+    }
+
+    fn expected_frame_len(prefix: &[u8]) -> Result<usize, SmartAudioError> {
+        let [_header1, _header2, _command, length, ..] = prefix else {
+            return Err(SmartAudioError::InvalidPayloadLength);
+        };
+        let length = usize::from(*length);
+        if !(constants::MIN_RESPONSE_LENGTH..=constants::MAX_RESPONSE_LENGTH).contains(&length) {
+            return Err(SmartAudioError::InvalidPayloadLength);
+        }
+        Ok(constants::RESPONSE_PREFIX_SIZE + length)
+    }
+
+    fn fill_buffer_to(
+        &mut self,
+        input: &mut &[u8],
+        target_len: usize,
+    ) -> Result<(), SmartAudioError> {
+        let count = (target_len - self.buffered_len).min(input.len());
+        let (bytes, rest) = input.split_at(count);
+        let end = self.buffered_len + count;
+        self.buffer
+            .get_mut(self.buffered_len..end)
+            .ok_or(SmartAudioError::InvalidPayloadLength)?
+            .copy_from_slice(bytes);
+        self.buffered_len = end;
+        *input = rest;
+        Ok(())
     }
 }
 
@@ -146,70 +221,171 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn recovers_after_invalid_response_lengths() {
-        for length in [0, 29, 255] {
-            let mut parser = SmartAudioParser::new();
-            for byte in [0xAA, 0x55, 0x02] {
-                assert!(matches!(parser.push_byte_raw(byte), Ok(None)));
+    extern crate std;
+    use std::vec::Vec;
+
+    const VALID: &[u8] = &[0xAA, 0x55, 0x02, 0x03, 0, 1, 0x0F];
+
+    fn drain(
+        parser: &mut SmartAudioParser,
+        mut input: &[u8],
+    ) -> Vec<Result<Vec<u8>, SmartAudioError>> {
+        let mut results = Vec::new();
+        loop {
+            let before = input.len();
+            match parser.next_frame(&mut input) {
+                Ok(Some(frame)) => results.push(Ok(frame.payload().to_vec())),
+                Ok(None) => {
+                    assert!(input.is_empty());
+                    break;
+                }
+                Err(error) => results.push(Err(error)),
             }
-            assert_eq!(
-                parser.push_byte_raw(length).unwrap_err(),
-                SmartAudioError::InvalidPayloadLength
+            assert!(
+                input.len() < before,
+                "every frame or error must advance input"
             );
-            for byte in [0xAA, 0x55, 0x02, 0x03, 0, 1] {
-                assert!(matches!(parser.push_byte_raw(byte), Ok(None)));
-            }
-            assert_eq!(parser.push_byte_raw(0x0F).unwrap().unwrap().command(), 0x02);
         }
+        results
     }
 
     #[test]
-    fn parses_valid_frame_after_overlapping_headers() {
-        let valid = [0xAA, 0x55, 0x02, 0x03, 0x00, 0x01, 0x0F];
-
-        for extra_headers in [1, 2, 32] {
-            let mut parser = SmartAudioParser::new();
-            for _ in 0..extra_headers {
-                assert!(matches!(parser.push_byte_raw(0xAA), Ok(None)));
-            }
-            for &byte in valid.iter().take(valid.len() - 1) {
-                assert!(matches!(parser.push_byte_raw(byte), Ok(None)));
-            }
-            let frame = parser.push_byte_raw(0x0F).unwrap().unwrap();
-            assert_eq!(frame.command(), 0x02);
-            assert_eq!(frame.payload(), &[0x00, 0x01]);
-            assert_eq!(frame.len(), valid.len());
-        }
-    }
-
-    #[test]
-    fn test_parses_valid_frame_after_invalid_crc() {
-        let invalid = [0xAA, 0x55, 0x09, 0x06, 0x01, 0x00, 0x1A, 0x16, 0xE9, 0x0B];
-        let valid = [0xAA, 0x55, 0x02, 0x03, 0x00, 0x01, 0x0F];
+    fn complete_frames_borrow_input_without_using_buffer() {
         let mut parser = SmartAudioParser::new();
+        let mut input = VALID;
+        let expected_payload = VALID.get(4..6).unwrap();
+        let frame = parser.next_frame(&mut input).unwrap().unwrap();
+        assert_eq!(frame.payload().as_ptr(), expected_payload.as_ptr());
+        assert_eq!(frame.payload(), expected_payload);
+        assert!(input.is_empty());
+        assert_eq!(parser.buffer, [0; constants::MAX_FRAME_SIZE]);
+        assert_eq!(parser.buffered_len, 0);
+    }
 
-        for &byte in invalid.iter().take(invalid.len() - 1) {
-            assert!(matches!(parser.push_byte_raw(byte), Ok(None)));
-        }
-        assert!(matches!(
-            parser.push_byte_raw(0x0B),
-            Err(SmartAudioError::InvalidCrc {
-                calculated_crc: 0x0A,
-                frame_crc: 0x0B,
-            })
-        ));
+    #[test]
+    fn overlapping_header_resumes_direct_borrowing() {
+        let mut parser = SmartAudioParser::new();
+        assert!(parser.next_frame(&mut &[0xAA][..]).unwrap().is_none());
+        let mut input = VALID;
+        let frame = parser.next_frame(&mut input).unwrap().unwrap();
+        assert_eq!(frame.payload().as_ptr(), VALID.get(4..).unwrap().as_ptr());
+        assert!(input.is_empty());
+        assert_eq!(parser.buffered_len, 0);
+    }
 
-        // Recovery must happen automatically, without an explicit reset.
-        for _ in 0..2 {
-            for &byte in valid.iter().take(valid.len() - 1) {
-                assert!(matches!(parser.push_byte_raw(byte), Ok(None)));
+    #[test]
+    fn spanning_frame_borrows_buffer_then_next_frame_borrows_input() {
+        let mut parser = SmartAudioParser::new();
+        let (prefix, suffix) = VALID.split_at(5);
+        assert!(parser.next_frame(&mut &prefix[..]).unwrap().is_none());
+        let buffered_payload_ptr = parser.buffer.get(4..).unwrap().as_ptr();
+        let mut chunk = suffix.to_vec();
+        chunk.extend_from_slice(VALID);
+        let mut input = chunk.as_slice();
+        let frame = parser.next_frame(&mut input).unwrap().unwrap();
+        assert_eq!(frame.payload().as_ptr(), buffered_payload_ptr);
+        assert_eq!(frame.payload(), &[0, 1]);
+        assert_eq!(input, VALID);
+        let expected_ptr = input.get(4..).unwrap().as_ptr();
+        let frame = parser.next_frame(&mut input).unwrap().unwrap();
+        assert_eq!(frame.payload().as_ptr(), expected_ptr);
+        assert!(input.is_empty());
+    }
+
+    #[test]
+    fn parses_minimum_and_maximum_frames_across_all_three_chunk_splits() {
+        for length in [1, constants::MAX_RESPONSE_LENGTH] {
+            let mut bytes = std::vec![0xAA, 0x55, 0xFF, length as u8];
+            bytes.extend(core::iter::repeat(0xAA).take(length - 1));
+            bytes.push(crate::framing::crc8_dvb_s2(bytes.get(2..).unwrap()));
+            for first in 0..=bytes.len() {
+                for second in first..=bytes.len() {
+                    let mut parser = SmartAudioParser::new();
+                    let (a, remaining) = bytes.split_at(first);
+                    let (b, c) = remaining.split_at(second - first);
+                    let mut results = Vec::new();
+                    for chunk in [a, &[], b, &[], c] {
+                        results.extend(drain(&mut parser, chunk));
+                    }
+                    assert_eq!(results, std::vec![Ok(std::vec![0xAA; length - 1])]);
+                    assert_eq!(parser.buffered_len, 0);
+                }
             }
-            let frame = parser.push_byte_raw(0x0F).unwrap().unwrap();
-            assert_eq!(frame.command(), 0x02);
-            assert_eq!(frame.payload(), &[0x00, 0x01]);
-            assert_eq!(frame.crc(), 0x0F);
         }
+    }
+
+    #[test]
+    fn errors_and_recovery_are_independent_of_chunk_boundaries() {
+        let mut bytes = std::vec![0, 0xAA, 0xAA, 0x12];
+        for length in [0, 29, 255] {
+            bytes.extend_from_slice(&[0xAA, 0x55, 0x02, length]);
+        }
+        bytes.extend_from_slice(&[0xAA, 0x55, 0x02, 0x03, 0, 1, 0x0E]);
+        bytes.extend_from_slice(&[0xAA, 0xAA]);
+        bytes.extend_from_slice(VALID);
+        bytes.extend_from_slice(VALID);
+        let expected = std::vec![
+            Err(SmartAudioError::UnexpectedDataForState(
+                State::AwaitingHeader1,
+                0
+            )),
+            Err(SmartAudioError::UnexpectedDataForState(
+                State::AwaitingHeader2,
+                0x12
+            )),
+            Err(SmartAudioError::InvalidPayloadLength),
+            Err(SmartAudioError::InvalidPayloadLength),
+            Err(SmartAudioError::InvalidPayloadLength),
+            Err(SmartAudioError::InvalidCrc {
+                calculated_crc: 0x0F,
+                frame_crc: 0x0E
+            }),
+            Ok(std::vec![0, 1]),
+            Ok(std::vec![0, 1]),
+        ];
+        for first in 0..=bytes.len() {
+            for second in first..=bytes.len() {
+                let mut parser = SmartAudioParser::new();
+                let (a, remaining) = bytes.split_at(first);
+                let (b, c) = remaining.split_at(second - first);
+                let mut results = Vec::new();
+                for chunk in [a, b, c] {
+                    results.extend(drain(&mut parser, chunk));
+                }
+                assert_eq!(results, expected, "splits at {first} and {second}");
+            }
+        }
+        let mut parser = SmartAudioParser::new();
+        let mut results = Vec::new();
+        for byte in &bytes {
+            results.extend(drain(&mut parser, core::slice::from_ref(byte)));
+        }
+        assert_eq!(results, expected);
+    }
+
+    #[test]
+    fn reset_discards_any_partial_frame() {
+        for split in 1..VALID.len() {
+            let mut parser = SmartAudioParser::new();
+            let (prefix, _) = VALID.split_at(split);
+            assert!(drain(&mut parser, prefix).is_empty());
+            parser.reset();
+            assert_eq!(drain(&mut parser, VALID), std::vec![Ok(std::vec![0, 1])]);
+        }
+    }
+
+    #[test]
+    fn exhausted_transport_buffer_can_be_reused() {
+        let mut parser = SmartAudioParser::new();
+        let mut transport = [0xAA, 0x55, 0x02, 0x03];
+        assert!(parser.next_frame(&mut &transport[..]).unwrap().is_none());
+        transport.copy_from_slice(&[0, 1, 0x0F, 0]);
+        let mut input = transport.as_slice();
+        assert_eq!(
+            parser.next_frame(&mut input).unwrap().unwrap().payload(),
+            &[0, 1]
+        );
+        assert_eq!(input, &[0]);
     }
 
     #[test]
@@ -311,15 +487,7 @@ mod tests {
 
         for raw_bytes in packets {
             let mut parser = SmartAudioParser::new();
-            for b in &raw_bytes[0..raw_bytes.len() - 1] {
-                let result = parser.push_byte_raw(*b);
-                assert!(matches!(result, Ok(None)));
-            }
-            let last_index = raw_bytes.len() - 1;
-            let p = parser
-                .push_byte_raw(raw_bytes[last_index])
-                .unwrap()
-                .unwrap();
+            let p = parser.next_frame(&mut &raw_bytes[..]).unwrap().unwrap();
             assert_eq!(p.len(), raw_bytes.len());
             assert_eq!(p.crc(), *raw_bytes.last().unwrap());
         }
