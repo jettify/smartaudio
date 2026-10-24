@@ -6,6 +6,8 @@
 
 This is a `no_std` platform-agnostic implementation of the TBS `SmartAudio` protocol in Rust.
 
+`SmartAudio` is a single-wire UART communication protocol developed by Team BlackSheep (TBS) that allows a flight controller to configure and monitor an FPV drone's video transmitter (VTX)—controlling settings such as channel, frequency, transmit power, and pit mode. It is widely supported across analog FPV VTX hardware, including the TBS Unify Pro32 Series (Pro32 HV / Pro32 Nano), RUSHFPV Rush Tank Series (Tank Solo / Max Solo / Tank Plus), Foxeer Reaper Extreme, and AKK FPV Series (FX2, FX3, Race, and Alpha).
+
 ## Features
 
 * `no_std`, does not use the standard library or an allocator.
