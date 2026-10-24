@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/jettify/smartaudio/compare/v0.3.0...v0.4.0) - 2026-10-24
+
+### Added
+
+- [**breaking**] Zero copy parser with spill buffer. ([#36](https://github.com/jettify/smartaudio/issues/36))
+- Harden implementation, by avoiding use of indexes that may panic.
+
+### Fixed
+
+- [**breaking**] Zero copy API cleanup. ([#37](https://github.com/jettify/smartaudio/issues/37))
+- Encoder now rejects payloads over 255 bytes ([#34](https://github.com/jettify/smartaudio/issues/34))
+- Parser rejects command and payload size mismatches. ([#33](https://github.com/jettify/smartaudio/issues/33))
+- Fix overlapping headers. ([#32](https://github.com/jettify/smartaudio/issues/32))
+- Expose power, channel and freq fields. ([#31](https://github.com/jettify/smartaudio/issues/31))
+- Fixed variable power levels in smartaudio v2.1 ([#30](https://github.com/jettify/smartaudio/issues/30))
+- Fix stuck parser after crc issue. ([#29](https://github.com/jettify/smartaudio/issues/29))
+
+### Other
+
+- Explain where smartaudio protocol is used.
+- Rearange modules, more reddable naming ([#35](https://github.com/jettify/smartaudio/issues/35))
+- Update categories in cargo.toml.
+- Tweak readme.
+- Strict cargo lints. ([#28](https://github.com/jettify/smartaudio/issues/28))
+- Cleanup cargo packaging.
+
 ## [0.3.0](https://github.com/jettify/smartaudio/compare/v0.2.1...v0.3.0) - 2026-02-05
 
 ### Fixed
