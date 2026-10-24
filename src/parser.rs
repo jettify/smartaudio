@@ -26,9 +26,6 @@ pub enum State {
     #[default]
     AwaitingHeader1,
     AwaitingHeader2,
-    AwaitingCommand,
-    AwaitingLength,
-    Reading(usize),
 }
 
 /// Incremental VTX-to-host response parser with a fixed 32-byte buffer.
@@ -99,7 +96,6 @@ impl SmartAudioParser {
                     byte,
                 ));
             }
-            self.fill_buffer_to(input, 2)?;
         }
         if self.buffered_len < constants::RESPONSE_PREFIX_SIZE {
             self.fill_buffer_to(input, constants::RESPONSE_PREFIX_SIZE)?;
@@ -124,7 +120,7 @@ impl SmartAudioParser {
             .buffer
             .get(..expected_frame_len)
             .ok_or(SmartAudioError::InvalidPayloadLength)?;
-        RawSmartAudioFrame::new(bytes).map(Some)
+        RawSmartAudioFrame::try_from(bytes).map(Some)
     }
 
     fn parse_input<'a, 'input: 'a>(
@@ -138,11 +134,7 @@ impl SmartAudioParser {
                 [HEADER_BYTE_1, HEADER_BYTE_1, ..] => {
                     *input = input.split_at(1).1;
                 }
-                [HEADER_BYTE_1, HEADER_BYTE_2, ..] => break,
-                [HEADER_BYTE_1] => {
-                    self.fill_buffer_to(input, constants::RESPONSE_PREFIX_SIZE)?;
-                    return Ok(None);
-                }
+                [HEADER_BYTE_1] | [HEADER_BYTE_1, HEADER_BYTE_2, ..] => break,
                 [HEADER_BYTE_1, invalid, rest @ ..] => {
                     *input = rest;
                     return Err(SmartAudioError::UnexpectedDataForState(
@@ -178,7 +170,7 @@ impl SmartAudioParser {
         }
         let (bytes, rest) = input.split_at(expected_frame_len);
         *input = rest;
-        RawSmartAudioFrame::new(bytes).map(Some)
+        RawSmartAudioFrame::try_from(bytes).map(Some)
     }
 
     fn expected_frame_len(prefix: &[u8]) -> Result<usize, SmartAudioError> {

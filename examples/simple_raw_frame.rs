@@ -13,6 +13,7 @@ fn main() {
         0x16, 0xE9, // Current Frequency 5865
         0x0A, // CRC8
     ];
+    println!("Parsing raw frames from chunks:");
     // A transport may return chunks ending anywhere within a frame.
     for chunk in raw_settings_v20.chunks(4) {
         let mut input = chunk;

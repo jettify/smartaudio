@@ -455,7 +455,7 @@ mod tests {
                 _ => 5,
             };
             let bytes = response_bytes(command, &Vec::from_iter((0..payload_len).map(|_| 0)));
-            let frame = RawSmartAudioFrame::new(&bytes).unwrap();
+            let frame = RawSmartAudioFrame::try_from(bytes.as_slice()).unwrap();
             assert_conversion_command(&frame, SetPowerResponse::try_from(&frame), command == 0x02);
             assert_conversion_command(
                 &frame,
@@ -489,7 +489,7 @@ mod tests {
             for payload_len in 0..=8 {
                 let payload = Vec::from_iter((0..payload_len).map(|_| 0));
                 let bytes = response_bytes(command, &payload);
-                let frame = RawSmartAudioFrame::new(&bytes).unwrap();
+                let frame = RawSmartAudioFrame::try_from(bytes.as_slice()).unwrap();
                 let result = match command {
                     0x01 | 0x09 => Settings::try_from(&frame).map(|_| ()),
                     0x02 => SetPowerResponse::try_from(&frame).map(|_| ()),
@@ -510,7 +510,7 @@ mod tests {
     #[test]
     fn test_get_settings_v1_0_parsing() {
         let raw: [u8; 10] = [0xAA, 0x55, 0x01, 0x06, 0x00, 0x00, 0x01, 0x16, 0xE9, 0x4D];
-        let frame = RawSmartAudioFrame::new(&raw).unwrap();
+        let frame = RawSmartAudioFrame::try_from(raw.as_slice()).unwrap();
         let packet = Response::parse(&frame).unwrap();
         let expected = Settings {
             version: Version::V1_0,
@@ -530,7 +530,7 @@ mod tests {
     #[test]
     fn test_get_settings_v2_0_parsing() {
         let raw: [u8; 10] = [0xAA, 0x55, 0x09, 0x06, 0x01, 0x00, 0x1A, 0x16, 0xE9, 0x0A];
-        let frame = RawSmartAudioFrame::new(&raw).unwrap();
+        let frame = RawSmartAudioFrame::try_from(raw.as_slice()).unwrap();
         let packet = Response::parse(&frame).unwrap();
         let expected = Settings {
             version: Version::V2_0,
@@ -553,7 +553,7 @@ mod tests {
             0xAA, 0x55, 0x11, 0x0C, 0x00, 0x00, 0x00, 0x16, 0xE9, 0x0E, 0x03, 0x00, 0x0E, 0x14,
             0x1A, 0x01,
         ];
-        let frame = RawSmartAudioFrame::new(&raw).unwrap();
+        let frame = RawSmartAudioFrame::try_from(raw.as_slice()).unwrap();
         let packet = Response::parse(&frame).unwrap();
         let expected = Settings {
             version: Version::V2_1,
@@ -656,13 +656,13 @@ mod tests {
     #[test]
     fn test_set_power_response_parsing() {
         let raw_v20: [u8; 7] = [0xAA, 0x55, 0x02, 0x03, 0x00, 0x01, 0x0F];
-        let frame_v20 = RawSmartAudioFrame::new(&raw_v20).unwrap();
+        let frame_v20 = RawSmartAudioFrame::try_from(raw_v20.as_slice()).unwrap();
         let packet_v20 = Response::parse(&frame_v20).unwrap();
         let expected = SetPowerResponse { power: 0 };
         assert!(matches!(packet_v20, Response::SetPower(actual) if actual == expected));
 
         let raw_v21: [u8; 7] = [0xAA, 0x55, 0x02, 0x03, 0x0E, 0x01, 0x6D];
-        let frame_v21 = RawSmartAudioFrame::new(&raw_v21).unwrap();
+        let frame_v21 = RawSmartAudioFrame::try_from(raw_v21.as_slice()).unwrap();
         let packet_v21 = Response::parse(&frame_v21).unwrap();
         let expected = SetPowerResponse { power: 14 };
         assert!(matches!(packet_v21, Response::SetPower(actual) if actual == expected));
@@ -671,7 +671,7 @@ mod tests {
     #[test]
     fn test_set_channel_response_parsing() {
         let raw: [u8; 7] = [0xAA, 0x55, 0x03, 0x03, 0x00, 0x01, 0x4A];
-        let frame = RawSmartAudioFrame::new(&raw).unwrap();
+        let frame = RawSmartAudioFrame::try_from(raw.as_slice()).unwrap();
         let packet = Response::parse(&frame).unwrap();
         let expected = SetChannelResponse { channel: 0 };
         assert!(matches!(packet, Response::SetChannel(actual) if actual == expected));
@@ -680,7 +680,7 @@ mod tests {
     #[test]
     fn test_set_frequency_response_parsing() {
         let raw: [u8; 8] = [0xAA, 0x55, 0x04, 0x04, 0x16, 0xE9, 0x01, 0xF8];
-        let frame = RawSmartAudioFrame::new(&raw).unwrap();
+        let frame = RawSmartAudioFrame::try_from(raw.as_slice()).unwrap();
         let packet = Response::parse(&frame).unwrap();
         let expected = SetFrequencyResponse { frequency: 5865 };
         assert!(matches!(packet, Response::SetFrequency(actual) if actual == expected));
@@ -689,7 +689,7 @@ mod tests {
     #[test]
     fn test_set_mode_response_parsing() {
         let raw: [u8; 7] = [0xAA, 0x55, 0x05, 0x03, 0x0A, 0x01, 0x4F];
-        let frame = RawSmartAudioFrame::new(&raw).unwrap();
+        let frame = RawSmartAudioFrame::try_from(raw.as_slice()).unwrap();
         let packet = Response::parse(&frame).unwrap();
 
         let expected = SetModeResponse {
